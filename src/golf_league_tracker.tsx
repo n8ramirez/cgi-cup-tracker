@@ -153,6 +153,7 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
   );
 }
 
+// ── RESPONSIVE HOOK ──────────────────────────────────────────
 // ── ADMIN PIN ─────────────────────────────────────────────────
 const ADMIN_PIN = "2626";
 
@@ -412,7 +413,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
   const [ctpCount, setCtpCount] = useState(2);
   const [ctpHoles, setCtpHoles] = useState([{ hole: "", winnerId: "" }, { hole: "", winnerId: "" }]);
   const [doublePoints, setDoublePoints] = useState(false);
-  const [confirm, setConfirm] = useState(null);
+  const [confirm, setConfirm] = useState<number | null>(null);
 
   const existingRound = rounds.find(r => r.week === weekNum);
 
@@ -545,56 +546,60 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
               </select>
             </Field>
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-              <Th>CTP #</Th><Th>Hole Number</Th><Th>Winner</Th>
-            </tr></thead>
-            <tbody>
-              {ctpHoles.map((c, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
-                  <td style={tdStyle}>CTP {i + 1}</td>
-                  <td style={tdStyle}>
-                    <input type="number" value={c.hole} onChange={e => updateCtp(i, "hole", e.target.value)} placeholder="e.g. 5" style={{ ...inputStyle, width: 80 }} />
-                  </td>
-                  <td style={tdStyle}>
-                    <select value={c.winnerId} onChange={e => updateCtp(i, "winnerId", e.target.value)} style={inputStyle}>
-                      <option value="">— No winner / N/A —</option>
-                      {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+                <Th>CTP #</Th><Th>Hole Number</Th><Th>Winner</Th>
+              </tr></thead>
+              <tbody>
+                {ctpHoles.map((c, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
+                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>CTP {i + 1}</td>
+                    <td style={tdStyle}>
+                      <input type="number" value={c.hole} onChange={e => updateCtp(i, "hole", e.target.value)} placeholder="e.g. 5" style={{ ...inputStyle, width: 60 }} />
+                    </td>
+                    <td style={tdStyle}>
+                      <select value={c.winnerId} onChange={e => updateCtp(i, "winnerId", e.target.value)} style={{ ...inputStyle, minWidth: 130, maxWidth: "100%" }}>
+                        <option value="">—</option>
+                        {players.map((p: Player) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         {players.length > 0 && <button onClick={saveRound} style={{ ...btnStyle("#1a5c2a"), marginTop: 16 }}>💾 Save Week {weekNum} Scores</button>}
       </Card>
 
       {rounds.length > 0 && (
         <Card title="Saved Rounds">
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr style={{ borderBottom: "2px solid #e0e8e0" }}>
-              <Th>Week</Th><Th>Date</Th><Th>Course</Th><Th>9</Th><Th>Players</Th><Th>Actions</Th>
-            </tr></thead>
-            <tbody>
-              {rounds.map(r => {
-                const course = courses.find(c => c.id === r.courseId);
-                return (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #eef2ee" }}>
-                    <td style={tdStyle}>Week {r.week}</td>
-                    <td style={tdStyle}>{r.date}</td>
-                    <td style={tdStyle}>{course?.name ?? "—"}</td>
-                    <td style={tdStyle}>{r.side === "front" ? "Front" : "Back"}</td>
-                    <td style={tdStyle}>{r.scores.length}</td>
-                    <td style={tdStyle}>
-                      <button onClick={() => setWeekNum(r.week)} style={btnSmall("#2d6a8a")}>Edit</button>{" "}
-                      <button onClick={() => setConfirm(r.week)} style={btnSmall("#c0392b")}>Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+                <Th style={stickyTh1}>Week</Th><Th>Date</Th><Th>Course</Th><Th>9</Th><Th>Players</Th><Th>Actions</Th>
+              </tr></thead>
+              <tbody>
+                {rounds.map((r: Round) => {
+                  const course = courses.find((c: Course) => c.id === r.courseId);
+                  return (
+                    <tr key={r.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                      <td style={{ ...tdStyle, ...stickyTd1 }}>Week {r.week}</td>
+                      <td style={tdStyle}>{r.date}</td>
+                      <td style={tdStyle}>{course?.name ?? "—"}</td>
+                      <td style={tdStyle}>{r.side === "front" ? "Front" : "Back"}</td>
+                      <td style={tdStyle}>{r.scores.length}</td>
+                      <td style={tdStyle}>
+                        <button onClick={() => setWeekNum(r.week)} style={btnSmall("#2d6a8a")}>Edit</button>{" "}
+                        <button onClick={() => setConfirm(r.week)} style={btnSmall("#c0392b")}>Remove</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>
@@ -664,27 +669,31 @@ function LeaderboardTab({ players, rounds, courses }) {
           </div>
         )}
 
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-            <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net Score</Th><Th>Payout</Th>
-          </tr></thead>
-          <tbody>
-            {results.slice(0, 4).map((r: RoundResult, i: number) => {
-              const payout = prize.placements[i];
-              return (
-                <tr key={r.player.id} style={{ borderBottom: "1px solid #eef2ee", background: i === 0 ? "#f0faf0" : "transparent" }}>
-                  <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
-                  <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{r.player.name}</td>
-                  <td style={tdStyle}>{r.gross}</td>
-                  <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
-                  <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
-                  <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
-                  <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>{payout ? `$${payout.amount}` : "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+              <Th style={stickyTh1}>#</Th>
+              <Th style={stickyTh2}>Player</Th>
+              <Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net Score</Th><Th>Payout</Th>
+            </tr></thead>
+            <tbody>
+              {results.slice(0, 4).map((r: RoundResult, i: number) => {
+                const payout = prize.placements[i];
+                return (
+                  <tr key={r.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                    <td style={{ ...tdStyle, ...stickyTd1, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
+                    <td style={{ ...tdStyle, ...stickyTd2, fontWeight: i === 0 ? 700 : 400 }}>{r.player.name}</td>
+                    <td style={tdStyle}>{r.gross}</td>
+                    <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
+                    <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>{payout ? `$${payout.amount}` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
           * Strokes = (Par − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes (strokes are negative for higher handicappers). Modified Avg updates each week based on actual scores.
         </p>
@@ -725,7 +734,6 @@ function LeaderboardTab({ players, rounds, courses }) {
 function HistoryTab({ players, rounds, courses }) {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(() => rounds.length > 0 ? rounds[rounds.length - 1].week : null);
-
   if (rounds.length === 0) return <Card title="Season History"><p style={{ color: "#888" }}>No rounds entered yet.</p></Card>;
 
   const allResults = rounds.map((round: Round, roundIndex: number) => {
@@ -779,23 +787,27 @@ function HistoryTab({ players, rounds, courses }) {
               Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {par}
               {round.doublePoints && <><br /><span style={{ background: "#1a5c2a", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span></>}
             </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
-                <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net</Th>
-              </tr></thead>
-              <tbody>
-                {scores.map((s: RoundResult, i: number) => (
-                  <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
-                    <td style={tdStyle}>{i + 1}</td>
-                    <td style={tdStyle}>{s.player.name}</td>
-                    <td style={tdStyle}>{s.gross}</td>
-                    <td style={tdStyle}>{s.modAvg.toFixed(2)}</td>
-                    <td style={tdStyle}>{s.strokes.toFixed(1)}</td>
-                    <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "#1a5c2a" : "#333" }}>{s.net.toFixed(1)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
+                  <Th style={stickyTh1}>#</Th>
+                  <Th style={stickyTh2}>Player</Th>
+                  <Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net</Th>
+                </tr></thead>
+                <tbody>
+                  {scores.map((s: RoundResult, i: number) => (
+                    <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                      <td style={{ ...tdStyle, ...stickyTd1 }}>{i + 1}</td>
+                      <td style={{ ...tdStyle, ...stickyTd2 }}>{s.player.name}</td>
+                      <td style={tdStyle}>{s.gross}</td>
+                      <td style={tdStyle}>{s.modAvg.toFixed(2)}</td>
+                      <td style={tdStyle}>{s.strokes.toFixed(1)}</td>
+                      <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "#1a5c2a" : "#333" }}>{s.net.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             {round.ctp && round.ctp.some(c => c.hole) && (
               <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
                 📍 CTP: {round.ctp.filter(c => c.hole).map(c => {
@@ -816,29 +828,34 @@ function HistoryTab({ players, rounds, courses }) {
           </select>
         </Field>
         {playerHistory && (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12, fontSize: 13 }}>
-            <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-              <Th>Week</Th><Th>Course</Th><Th>9</Th><Th>Par</Th><Th>Gross</Th><Th>Mod Avg Before</Th><Th>Mod Avg After</Th><Th>Strokes</Th><Th>Net</Th><Th>Finish</Th>
-            </tr></thead>
-            <tbody>
-              {playerHistory.map(h => (
-                <tr key={h.round.week} style={{ borderBottom: "1px solid #eef2ee" }}>
-                  <td style={tdStyle}>Week {h.round.week}</td>
-                  <td style={tdStyle}>{h.course?.name ?? "—"}</td>
-                  <td style={tdStyle}>{h.round.side === "front" ? "Front" : "Back"}</td>
-                  <td style={tdStyle}>{h.par}</td>
-                  <td style={tdStyle}>{h.gross}</td>
-                  <td style={tdStyle}>{h.modAvgBefore.toFixed(2)}</td>
-                  <td style={{ ...tdStyle, fontWeight: 600, color: h.modAvgAfter < h.modAvgBefore ? "#1a5c2a" : "#c0392b" }}>
-                    {h.modAvgAfter.toFixed(2)}
-                  </td>
-                  <td style={tdStyle}>{h.strokes.toFixed(1)}</td>
-                  <td style={tdStyle}>{h.net.toFixed(1)}</td>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{h.rank}/{h.total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, marginTop: 12, fontSize: 13 }}>
+              <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+                <Th style={stickyTh1}>Week</Th>
+                <Th>Course</Th><Th>9</Th><Th>Par</Th><Th>Gross</Th>
+                <Th>Mod Avg Before</Th><Th>Mod Avg After</Th><Th>Strokes</Th>
+                <Th>Net</Th><Th>Finish</Th>
+              </tr></thead>
+              <tbody>
+                {playerHistory.map((h: any) => (
+                  <tr key={h.round.week} style={{ borderBottom: "1px solid #eef2ee" }}>
+                    <td style={{ ...tdStyle, ...stickyTd1 }}>Week {h.round.week}</td>
+                    <td style={tdStyle}>{h.course?.name ?? "—"}</td>
+                    <td style={tdStyle}>{h.round.side === "front" ? "Front" : "Back"}</td>
+                    <td style={tdStyle}>{h.par}</td>
+                    <td style={tdStyle}>{h.gross}</td>
+                    <td style={tdStyle}>{h.modAvgBefore.toFixed(2)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: h.modAvgAfter < h.modAvgBefore ? "#1a5c2a" : "#c0392b" }}>
+                      {h.modAvgAfter.toFixed(2)}
+                    </td>
+                    <td style={tdStyle}>{h.strokes.toFixed(1)}</td>
+                    <td style={tdStyle}>{h.net.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{h.rank}/{h.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
@@ -889,26 +906,28 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
   return (
     <div>
       <Card title="CGI Cup Standings">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-            <Th>#</Th><Th>Player</Th><Th>Total Points</Th><Th>Events Played</Th><Th>Avg / Event</Th><Th>Wins</Th><Th>Top 3's</Th>
-          </tr></thead>
-          <tbody>
-            {standings.map((s, i) => (
-              <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
-                <td style={{ ...tdStyle, fontWeight: 700, color: i < 3 ? "#1a5c2a" : "#333" }}>
-                  {i + 1}
-                </td>
-                <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{s.player.name}</td>
-                <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a", fontSize: 16 }}>{s.total}</td>
-                <td style={tdStyle}>{s.weeksPlayed}</td>
-                <td style={tdStyle}>{s.weeksPlayed > 0 ? (s.total / s.weeksPlayed).toFixed(1) : "—"}</td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{s.wins}</td>
-                <td style={tdStyle}>{s.top3s}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+              <Th style={stickyTh1}>#</Th>
+              <Th style={stickyTh2}>Player</Th>
+              <Th>Total Points</Th><Th>Events Played</Th><Th>Avg / Event</Th><Th>Wins</Th><Th>Top 3's</Th>
+            </tr></thead>
+            <tbody>
+              {standings.map((s, i) => (
+                <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                  <td style={{ ...tdStyle, ...stickyTd1, fontWeight: 700, color: i < 3 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
+                  <td style={{ ...tdStyle, ...stickyTd2, fontWeight: i === 0 ? 700 : 400 }}>{s.player.name}</td>
+                  <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a", fontSize: 16 }}>{s.total}</td>
+                  <td style={tdStyle}>{s.weeksPlayed}</td>
+                  <td style={tdStyle}>{s.weeksPlayed > 0 ? (s.total / s.weeksPlayed).toFixed(1) : "—"}</td>
+                  <td style={{ ...tdStyle, fontWeight: 700 }}>{s.wins}</td>
+                  <td style={tdStyle}>{s.top3s}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
           * Guests are not eligible for points. ⚡ Double Points weeks multiply placement points by 2. All players who participate earn +10 points regardless of finish.
         </p>
@@ -916,9 +935,9 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
 
       <Card title="Weekly Points Breakdown">
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-              <Th>Player</Th>
+              <Th style={stickyTh1}>Player</Th>
               {rounds.map((r: Round) => (
                 <Th key={r.week}>Wk {r.week}{r.doublePoints ? " ⚡" : ""}</Th>
               ))}
@@ -927,7 +946,7 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
             <tbody>
               {standings.map(s => (
                 <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{s.player.name}</td>
+                  <td style={{ ...tdStyle, ...stickyTd1, fontWeight: 600 }}>{s.player.name}</td>
                   {rounds.map((r: Round) => {
                     const pts = s.weeklyPoints[r.week];
                     return (
@@ -1100,8 +1119,8 @@ function Card({ title, children }) {
 function Field({ label, children }) {
   return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><label style={{ fontSize: 12, fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>{children}</div>;
 }
-function Th({ children }) {
-  return <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 12, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: 0.3 }}>{children}</th>;
+function Th({ children, style = {} }) {
+  return <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 12, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: 0.3, ...style }}>{children}</th>;
 }
 function StatBox({ label, value }) {
   return (
@@ -1112,6 +1131,10 @@ function StatBox({ label, value }) {
   );
 }
 const tdStyle = { padding: "9px 10px", fontSize: 14, verticalAlign: "middle", textAlign: "left" as const };
+const stickyTh1 = { position: "sticky" as const, left: 0, zIndex: 2, backgroundColor: "#f5fbf5" };
+const stickyTh2 = { position: "sticky" as const, left: 40, zIndex: 2, backgroundColor: "#f5fbf5", paddingRight: 16 };
+const stickyTd1 = { position: "sticky" as const, left: 0, zIndex: 1, backgroundColor: "#fff" };
+const stickyTd2 = { position: "sticky" as const, left: 40, zIndex: 1, backgroundColor: "#fff", paddingRight: 16 };
 const inputStyle = { padding: "7px 10px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14, outline: "none" };
 const btnStyle = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 7, padding: "9px 18px", cursor: "pointer", fontWeight: 600, fontSize: 14 });
 const btnSmall = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 5, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600 });
