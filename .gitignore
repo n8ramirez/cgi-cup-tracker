@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Project-specific
+src/.claude/
+src/*.xlsx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
