@@ -153,13 +153,26 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
   );
 }
 
+// ── ADMIN PIN ─────────────────────────────────────────────────
+const ADMIN_PIN = "2626";
+
 // ── APP ──────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState("players");
+  const [tab, setTab] = useState("leaderboard");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [players, setPlayersRaw] = useState([]);
   const [rounds, setRoundsRaw] = useState([]);
   const [courses, setCoursesRaw] = useState([]);
   const [loaded, setLoaded] = useState(false);
+
+  const promptAdmin = () => {
+    const entered = window.prompt("Enter admin PIN:");
+    if (entered === ADMIN_PIN) {
+      setIsAdmin(true);
+    } else if (entered !== null) {
+      alert("Incorrect PIN.");
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -197,15 +210,23 @@ export default function App() {
 
   if (!loaded) return <div style={{ padding: 40, textAlign: "center", color: "#888" }}>Loading...</div>;
 
-  const tabs = ["players", "courses", "scores", "leaderboard", "standings", "history", "info"] as const;
-  const tabLabels: Record<typeof tabs[number], string> = { players: "👤 Players", courses: "🗺️ Courses", scores: "📝 Enter Scores", leaderboard: "🏅 Leaderboard", history: "📋 Season History", standings: "🏆 Standings", info: "ℹ️ How It Works" };
+  const adminTabs = ["players", "courses", "scores"] as const;
+  const publicTabs = ["leaderboard", "standings", "history", "info"] as const;
+  const allTabs = [...adminTabs, ...publicTabs] as const;
+  const tabLabels: Record<typeof allTabs[number], string> = { players: "👤 Players", courses: "🗺️ Courses", scores: "📝 Enter Scores", leaderboard: "🏅 Leaderboard", standings: "🏆 Standings", history: "📋 Season History", info: "ℹ️ How It Works" };
+  const visibleTabs = isAdmin ? allTabs : publicTabs;
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: "#f0f4f0", minHeight: "100vh", paddingBottom: 40 }}>
       <div style={{ background: "linear-gradient(135deg, #1a5c2a, #2d8a45)", color: "#fff", padding: "18px 24px 0", boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>⛳ CGI CUP</h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>⛳ CGI CUP</h1>
+          <button onClick={isAdmin ? () => setIsAdmin(false) : promptAdmin} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            {isAdmin ? "🔓 Admin" : "🔒 Admin"}
+          </button>
+        </div>
         <div style={{ display: "flex", gap: 4, marginTop: 14, flexWrap: "wrap" }}>
-          {tabs.map(t => (
+          {visibleTabs.map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               background: tab === t ? "#fff" : "transparent",
               color: tab === t ? "#1a5c2a" : "rgba(255,255,255,0.85)",
@@ -634,7 +655,7 @@ function LeaderboardTab({ players, rounds, courses }) {
         {results.length > 0 && (
           <div style={{ background: "linear-gradient(135deg, #1a5c2a, #2d8a45)", borderRadius: 10, padding: "16px 20px", marginBottom: 16, color: "#fff" }}>
             <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>
-              🏆 WINNER{round.doublePoints && <span style={{ marginLeft: 10, background: "rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span>}
+              🏆 WINNER{round.doublePoints && <><br /><span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span></>}
             </div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{results[0].player.name}</div>
             <div style={{ fontSize: 14, opacity: 0.9, marginTop: 4 }}>
@@ -756,7 +777,7 @@ function HistoryTab({ players, rounds, courses }) {
           <div key={round.week} style={{ marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", marginBottom: 6 }}>
               Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {par}
-              {round.doublePoints && <span style={{ marginLeft: 10, background: "#1a5c2a", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span>}
+              {round.doublePoints && <><br /><span style={{ background: "#1a5c2a", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span></>}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
