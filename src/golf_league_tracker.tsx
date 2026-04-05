@@ -683,7 +683,7 @@ function LeaderboardTab({ players, rounds, courses }) {
                     <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
                       <td style={tdStyle}>Hole {c.hole || "—"}</td>
                       <td style={{ ...tdStyle, fontWeight: winner ? 700 : 400, color: winner ? "#1a5c2a" : "#999" }}>
-                        {winner ? `🏅 ${winner.name}` : "No winner entered"}
+                        {winner ? `🏅 ${winner.name}` : "—"}
                       </td>
                       <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>
                         {ctpPayout ? `$${ctpPayout.amount}` : "—"}
@@ -756,6 +756,7 @@ function HistoryTab({ players, rounds, courses }) {
           <div key={round.week} style={{ marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", marginBottom: 6 }}>
               Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {par}
+              {round.doublePoints && <span style={{ marginLeft: 10, background: "#1a5c2a", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span>}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
