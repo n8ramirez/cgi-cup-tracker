@@ -7,7 +7,7 @@ interface Course { id: number; name: string; }
 interface Player { id: number; name: string; startingAvg: number; guest?: boolean; }
 interface Score { playerId: number; gross: number; }
 interface CtpEntry { hole: string; winnerId: string | null; }
-interface Round { id: number; week: number; date: string; courseId: number; side: "front" | "back"; par: number; scores: Score[]; ctp: CtpEntry[]; }
+interface Round { id: number; week: number; date: string; courseId: number; side: "front" | "back"; par: number; scores: Score[]; ctp: CtpEntry[]; doublePoints?: boolean; }
 
 // ── STORAGE ──────────────────────────────────────────────────
 async function load(key: string, fallback: unknown) {
@@ -128,6 +128,15 @@ function calcPrizeMoney(round: Round, results: RoundResult[], players: Player[])
   return { purse, ctpPool, ctpPayouts, placements };
 }
 
+// ── CGI CUP POINTS ───────────────────────────────────────────
+const PLACEMENT_POINTS = [120, 90, 65, 45, 30, 20, 16, 12, 9, 6];
+
+function calcPoints(rank: number, doublePoints: boolean): number {
+  const placePower = doublePoints ? 2 : 1;
+  const placementPts = rank >= 1 && rank <= 10 ? PLACEMENT_POINTS[rank - 1] : 0;
+  return placementPts * placePower + 10; // +10 participation always (guests excluded at call site)
+}
+
 // ── CONFIRM DIALOG ───────────────────────────────────────────
 function ConfirmDialog({ message, onConfirm, onCancel }) {
   return (
@@ -188,8 +197,8 @@ export default function App() {
 
   if (!loaded) return <div style={{ padding: 40, textAlign: "center", color: "#888" }}>Loading...</div>;
 
-  const tabs = ["players", "courses", "scores", "leaderboard", "history", "info"] as const;
-  const tabLabels: Record<typeof tabs[number], string> = { players: "👤 Players", courses: "🗺️ Courses", scores: "📝 Enter Scores", leaderboard: "🏆 Leaderboard", history: "📋 Season History", info: "ℹ️ How It Works" };
+  const tabs = ["players", "courses", "scores", "leaderboard", "standings", "history", "info"] as const;
+  const tabLabels: Record<typeof tabs[number], string> = { players: "👤 Players", courses: "🗺️ Courses", scores: "📝 Enter Scores", leaderboard: "🏅 Leaderboard", history: "📋 Season History", standings: "🏆 Standings", info: "ℹ️ How It Works" };
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: "#f0f4f0", minHeight: "100vh", paddingBottom: 40 }}>
@@ -212,6 +221,7 @@ export default function App() {
         {tab === "scores"      && <ScoresTab      players={players} rounds={rounds} setRounds={setRounds} courses={courses} />}
         {tab === "leaderboard" && <LeaderboardTab players={players} rounds={rounds} courses={courses} />}
         {tab === "history"     && <HistoryTab     players={players} rounds={rounds} courses={courses} />}
+        {tab === "standings"   && <StandingsTab   players={players} rounds={rounds} />}
         {tab === "info"        && <InfoTab />}
       </div>
     </div>
@@ -380,6 +390,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
   const [grossScores, setGrossScores] = useState({});
   const [ctpCount, setCtpCount] = useState(2);
   const [ctpHoles, setCtpHoles] = useState([{ hole: "", winnerId: "" }, { hole: "", winnerId: "" }]);
+  const [doublePoints, setDoublePoints] = useState(false);
   const [confirm, setConfirm] = useState(null);
 
   const existingRound = rounds.find(r => r.week === weekNum);
@@ -397,9 +408,11 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
         setCtpCount(existingRound.ctp.length);
         setCtpHoles(existingRound.ctp.map(c => ({ hole: c.hole, winnerId: c.winnerId ?? "" })));
       }
+      setDoublePoints(!!existingRound.doublePoints);
     } else {
       setParticipating({}); setGrossScores({});
       setCtpHoles(Array.from({ length: ctpCount }, () => ({ hole: "", winnerId: "" })));
+      setDoublePoints(false);
     }
   }, [weekNum]);
 
@@ -423,7 +436,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
     if (scores.length === 0) return alert("Enter at least one score.");
     const ctp = ctpHoles.map(c => ({ hole: c.hole, winnerId: c.winnerId || null }));
     const roundPar = parseFloat(par) > 0 ? parseFloat(par) : 0;
-    const round = { id: existingRound?.id || Date.now(), week: weekNum, date, courseId: parseInt(courseId), side, par: roundPar, scores, ctp };
+    const round = { id: existingRound?.id || Date.now(), week: weekNum, date, courseId: parseInt(courseId), side, par: roundPar, scores, ctp, doublePoints };
     setRounds(prev => [...prev.filter(r => r.week !== weekNum), round].sort((a, b) => a.week - b.week));
     alert(`Week ${weekNum} scores saved!`);
   };
@@ -468,6 +481,10 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
           <Field label="Par">
             <input type="number" value={par} onChange={e => setPar(e.target.value)} placeholder="e.g. 36" style={{ ...inputStyle, width: 80, fontSize: 13 }} />
           </Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#555", paddingBottom: 2, cursor: "pointer", fontWeight: 600 }}>
+            <input type="checkbox" checked={doublePoints} onChange={e => setDoublePoints(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+            ⚡ Double Points Major Week
+          </label>
         </div>
 
         {courses.length === 0 && <p style={{ color: "#c0392b", fontSize: 13 }}>⚠️ Add a course in the Courses tab first.</p>}
@@ -475,12 +492,12 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
         {players.length === 0 && <p style={{ color: "#888" }}>Add players first in the Players tab.</p>}
 
         {players.length > 0 && (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0" }}>
               <Th>Playing?</Th><Th>Player</Th><Th>Gross Score</Th>
             </tr></thead>
             <tbody>
-              {players.map(p => (
+              {[...players].sort((a, b) => a.name.localeCompare(b.name)).map(p => (
                 <tr key={p.id} style={{ borderBottom: "1px solid #eef2ee", background: participating[p.id] ? "#f5fbf5" : "transparent" }}>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     <input type="checkbox" checked={!!participating[p.id]} onChange={() => togglePlayer(p.id)} style={{ width: 18, height: 18, cursor: "pointer" }} />
@@ -611,12 +628,14 @@ function LeaderboardTab({ players, rounds, courses }) {
           <StatBox label="Par" value={par} />
           <StatBox label="Course" value={course?.name ?? "—"} />
           <StatBox label="Players" value={round.scores.length} />
-          <StatBox label="Total Purse" value={`$${prize.purse}`} />
+          <StatBox label="Purse" value={`$${prize.purse}`} />
         </div>
 
         {results.length > 0 && (
           <div style={{ background: "linear-gradient(135deg, #1a5c2a, #2d8a45)", borderRadius: 10, padding: "16px 20px", marginBottom: 16, color: "#fff" }}>
-            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>🏆 WINNER</div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>
+              🏆 WINNER{round.doublePoints && <span style={{ marginLeft: 10, background: "rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span>}
+            </div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{results[0].player.name}</div>
             <div style={{ fontSize: 14, opacity: 0.9, marginTop: 4 }}>
               Net: {results[0].net.toFixed(1)} &nbsp;|&nbsp; Gross: {results[0].gross} &nbsp;|&nbsp; Mod Avg: {results[0].modAvg.toFixed(2)} &nbsp;|&nbsp; Strokes: {results[0].strokes.toFixed(1)}
@@ -804,6 +823,108 @@ function HistoryTab({ players, rounds, courses }) {
   );
 }
 
+// ── STANDINGS TAB ────────────────────────────────────────────
+function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] }) {
+  if (rounds.length === 0) return <Card title="CGI Cup Standings"><p style={{ color: "#888" }}>No rounds entered yet.</p></Card>;
+
+  // Accumulate points per non-guest player across all rounds
+  const playerData: Record<number, { player: Player; total: number; weeksPlayed: number; wins: number; top3s: number; weeklyPoints: Record<number, number> }> = {};
+  players.filter((p: Player) => !p.guest).forEach((p: Player) => {
+    playerData[p.id] = { player: p, total: 0, weeksPlayed: 0, wins: 0, top3s: 0, weeklyPoints: {} };
+  });
+
+  rounds.forEach((round: Round, roundIndex: number) => {
+    const par = round.par || 36;
+    const isDouble = !!round.doublePoints;
+
+    const results = round.scores.map((s: Score) => {
+      const player = players.find((p: Player) => p.id === s.playerId);
+      if (!player) return null;
+      const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
+      const strokes = calcStrokes(modAvg, par);
+      const net = s.gross + strokes;
+      return { player, net };
+    }).filter((r): r is { player: Player; net: number } => r !== null)
+      .sort((a, b) => a.net - b.net);
+
+    results.forEach((r, i) => {
+      if (r.player.guest) return;
+      const rank = i + 1;
+      const pts = calcPoints(rank, isDouble);
+      if (!playerData[r.player.id]) {
+        playerData[r.player.id] = { player: r.player, total: 0, weeksPlayed: 0, wins: 0, top3s: 0, weeklyPoints: {} };
+      }
+      playerData[r.player.id].total += pts;
+      playerData[r.player.id].weeksPlayed += 1;
+      if (rank === 1) playerData[r.player.id].wins += 1;
+      if (rank <= 3) playerData[r.player.id].top3s += 1;
+      playerData[r.player.id].weeklyPoints[round.week] = pts;
+    });
+  });
+
+  const standings = Object.values(playerData).sort((a, b) => b.total - a.total);
+
+  return (
+    <div>
+      <Card title="CGI Cup Standings">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+            <Th>#</Th><Th>Player</Th><Th>Total Points</Th><Th>Events Played</Th><Th>Avg / Event</Th><Th>Wins</Th><Th>Top 3's</Th>
+          </tr></thead>
+          <tbody>
+            {standings.map((s, i) => (
+              <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                <td style={{ ...tdStyle, fontWeight: 700, color: i < 3 ? "#1a5c2a" : "#333" }}>
+                  {i + 1}
+                </td>
+                <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{s.player.name}</td>
+                <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a", fontSize: 16 }}>{s.total}</td>
+                <td style={tdStyle}>{s.weeksPlayed}</td>
+                <td style={tdStyle}>{s.weeksPlayed > 0 ? (s.total / s.weeksPlayed).toFixed(1) : "—"}</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{s.wins}</td>
+                <td style={tdStyle}>{s.top3s}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
+          * Guests are not eligible for points. ⚡ Double Points weeks multiply placement points by 2. All players who participate earn +10 points regardless of finish.
+        </p>
+      </Card>
+
+      <Card title="Weekly Points Breakdown">
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+              <Th>Player</Th>
+              {rounds.map((r: Round) => (
+                <Th key={r.week}>Wk {r.week}{r.doublePoints ? " ⚡" : ""}</Th>
+              ))}
+              <Th>Total</Th>
+            </tr></thead>
+            <tbody>
+              {standings.map(s => (
+                <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{s.player.name}</td>
+                  {rounds.map((r: Round) => {
+                    const pts = s.weeklyPoints[r.week];
+                    return (
+                      <td key={r.week} style={{ ...tdStyle, color: pts !== undefined ? "#1a5c2a" : "#ccc" }}>
+                        {pts !== undefined ? pts : "—"}
+                      </td>
+                    );
+                  })}
+                  <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>{s.total}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ── INFO TAB ─────────────────────────────────────────────────
 function InfoTab() {
 
@@ -898,6 +1019,46 @@ function InfoTab() {
           Because bad rounds only raise the average by 20% of the overage, consistent improvement
           is rewarded: playing well drops the average quickly, while one bad round barely moves it up.
           This keeps handicaps fair and progressive throughout the season.
+        </p>
+      </Card>
+
+      <Card title="CGI Cup Points">
+        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How are season standings points calculated?</p>
+        <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 12px" }}>
+          Each week, players earn points based on their finishing position (net score rank) plus a flat
+          participation bonus. Guest players are not eligible and earn 0 points. Some weeks are designated
+          as <strong>⚡ Double Points</strong> weeks, which multiply placement points by 2.
+        </p>
+        {formula("Points  =  (Placement Points × Place Power)  +  10")}
+        <p style={{ color: "#444", lineHeight: 1.7, margin: "8px 0 12px" }}>
+          <strong>Place Power</strong> is 1× for a regular week and 2× for a Double Points week.<br />
+          The <strong>+10 participation bonus</strong> is awarded to every eligible player who plays, regardless of finish.
+        </p>
+        <p style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: "#555" }}>Placement Points by Finishing Position:</p>
+        <table style={{ borderCollapse: "collapse", fontSize: 13, marginBottom: 8, marginLeft: "auto", marginRight: "auto" }}>
+          <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
+            <th style={{ textAlign: "center", padding: "6px 16px 6px 10px", fontWeight: 700, color: "#555" }}>Finish</th>
+            <th style={{ textAlign: "center", padding: "6px 16px 6px 10px", fontWeight: 700, color: "#555" }}>Points</th>
+            <th style={{ textAlign: "center", padding: "6px 16px 6px 10px", fontWeight: 700, color: "#555" }}>Finish</th>
+            <th style={{ textAlign: "center", padding: "6px 10px 6px 10px", fontWeight: 700, color: "#555" }}>Points</th>
+          </tr></thead>
+          <tbody>
+            {[[1,120],[2,90],[3,65],[4,45],[5,30]].map(([pos, pts], i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
+                <td style={{ padding: "5px 16px 5px 10px", fontWeight: 600, textAlign: "center" }}>{pos === 1 ? "1st" : pos === 2 ? "2nd" : pos === 3 ? "3rd" : `${pos}th`}</td>
+                <td style={{ padding: "5px 16px 5px 10px", color: "#1a5c2a", fontWeight: 700, textAlign: "center" }}>{pts}</td>
+                <td style={{ padding: "5px 16px 5px 10px", fontWeight: 600, textAlign: "center" }}>{`${pos + 5}th`}</td>
+                <td style={{ padding: "5px 10px 5px 10px", color: "#1a5c2a", fontWeight: 700, textAlign: "center" }}>{[20,16,12,9,6][i]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ color: "#666", fontSize: 13, margin: "4px 0 0" }}>
+          Players finishing 11th or lower receive only the +10 participation bonus.
+        </p>
+        <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
+          Example (regular week, 1st place): 120 × 1 + 10 = <strong>130 points</strong><br />
+          Example (double points week, 3rd place): 65 × 2 + 10 = <strong>140 points</strong>
         </p>
       </Card>
 
