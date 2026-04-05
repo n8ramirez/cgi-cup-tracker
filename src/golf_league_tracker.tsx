@@ -4,7 +4,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 
 // ── TYPES ─────────────────────────────────────────────────────
 interface Course { id: number; name: string; }
-interface Player { id: number; name: string; startingAvg: number; }
+interface Player { id: number; name: string; startingAvg: number; guest?: boolean; }
 interface Score { playerId: number; gross: number; }
 interface CtpEntry { hole: string; winnerId: string | null; }
 interface Round { id: number; week: number; date: string; courseId: number; side: "front" | "back"; par: number; scores: Score[]; ctp: CtpEntry[]; }
@@ -55,6 +55,77 @@ function calcStrokes(modAvg: number, par: number): number {
   } else {
     return Math.round((par - modAvg) * 10) / 10;
   }
+}
+
+// ── PRIZE MONEY ──────────────────────────────────────────────
+interface PrizeMoney {
+  purse: number;
+  ctpPool: number;
+  ctpPayouts: { player: Player; amount: number }[];
+  placements: { player: Player | null; label: string; amount: number }[];
+}
+
+function roundTo5(val: number): number {
+  return Math.round(val / 5) * 5;
+}
+
+function calcPrizeMoney(round: Round, results: RoundResult[], players: Player[]): PrizeMoney {
+  const playerCount = round.scores.length;
+  const purse = playerCount * 10;
+  const ctpCount = round.ctp ? round.ctp.length : 0;
+
+  // Determine CTP pool and placement splits
+  let ctpPool = 0;
+  let splits: number[] = [];
+
+  if (playerCount <= 7) {
+    ctpPool = 0;
+    splits = [2 / 3, 1 / 3];
+  } else if (playerCount <= 11) {
+    ctpPool = ctpCount >= 3 ? 15 : 10;
+    splits = [0.5, 0.3, 0.2];
+  } else {
+    ctpPool = ctpCount >= 3 ? 30 : 20;
+    splits = [0.4, 0.3, 0.2, 0.1];
+  }
+
+  const remainingPurse = purse - ctpPool;
+
+  // Placement payouts — round each to nearest $5, last place gets remainder
+  const placements: PrizeMoney["placements"] = [];
+  let leftover = remainingPurse;
+  const labels = ["1st", "2nd", "3rd", "4th"];
+  for (let i = 0; i < splits.length; i++) {
+    const player = results[i]?.player ?? null;
+    let amount: number;
+    if (i < splits.length - 1) {
+      amount = roundTo5(remainingPurse * splits[i]);
+      leftover -= amount;
+    } else {
+      amount = leftover; // last place absorbs rounding remainder
+    }
+    placements.push({ player, label: labels[i], amount });
+  }
+
+  // CTP payouts — per-hole value = ctpPool / number of hole-wins (not holes configured)
+  const winningEntries = round.ctp ? round.ctp.filter(c => c.hole && c.winnerId) : [];
+  const totalWins = winningEntries.length;
+  const perWin = totalWins > 0 ? ctpPool / totalWins : 0;
+
+  const ctpMap: Record<string, { player: Player; amount: number }> = {};
+  winningEntries.forEach(c => {
+    const pid = String(c.winnerId);
+    const player = players.find(p => String(p.id) === pid);
+    if (!player) return;
+    if (ctpMap[pid]) {
+      ctpMap[pid].amount += perWin;
+    } else {
+      ctpMap[pid] = { player, amount: perWin };
+    }
+  });
+  const ctpPayouts = Object.values(ctpMap);
+
+  return { purse, ctpPool, ctpPayouts, placements };
 }
 
 // ── CONFIRM DIALOG ───────────────────────────────────────────
@@ -211,20 +282,22 @@ function CoursesTab({ courses, setCourses }: { courses: Course[]; setCourses: (u
 function PlayersTab({ players, setPlayers }) {
   const [name, setName] = useState("");
   const [avg, setAvg] = useState("");
+  const [guest, setGuest] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
   const [editAvg, setEditAvg] = useState("");
+  const [editGuest, setEditGuest] = useState(false);
   const [confirm, setConfirm] = useState(null);
 
   const addPlayer = () => {
     if (!name.trim() || !avg) return;
-    setPlayers(prev => [...prev, { id: Date.now(), name: name.trim(), startingAvg: parseFloat(avg) }]);
-    setName(""); setAvg("");
+    setPlayers(prev => [...prev, { id: Date.now(), name: name.trim(), startingAvg: parseFloat(avg), guest }]);
+    setName(""); setAvg(""); setGuest(false);
   };
 
   const saveEdit = (id) => {
     setPlayers(prev => prev.map(p => p.id === id
-      ? { ...p, name: editName.trim(), startingAvg: parseFloat(editAvg) }
+      ? { ...p, name: editName.trim(), startingAvg: parseFloat(editAvg), guest: editGuest }
       : p));
     setEditId(null);
   };
@@ -245,6 +318,10 @@ function PlayersTab({ players, setPlayers }) {
           <Field label="Starting Avg (9-hole)">
             <input type="number" value={avg} onChange={e => setAvg(e.target.value)} placeholder="e.g. 42" style={{ ...inputStyle, width: 130 }} />
           </Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#888", paddingBottom: 2, cursor: "pointer" }}>
+            <input type="checkbox" checked={guest} onChange={e => setGuest(e.target.checked)} />
+            Guest
+          </label>
           <button onClick={addPlayer} style={btnStyle("#1a5c2a")}>Add Player</button>
         </div>
       </Card>
@@ -262,17 +339,23 @@ function PlayersTab({ players, setPlayers }) {
                   <td style={tdStyle}>
                     {editId === p.id
                       ? <input value={editName} onChange={e => setEditName(e.target.value)} style={{ ...inputStyle, width: "100%" }} />
-                      : p.name}
+                      : <span>{p.name}{p.guest && <span style={{ marginLeft: 6, fontSize: 11, color: "#999", fontStyle: "italic" }}>guest</span>}</span>}
                   </td>
                   <td style={tdStyle}>
                     {editId === p.id
-                      ? <input type="number" value={editAvg} onChange={e => setEditAvg(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                      ? <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <input type="number" value={editAvg} onChange={e => setEditAvg(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, color: "#888", cursor: "pointer" }}>
+                            <input type="checkbox" checked={editGuest} onChange={e => setEditGuest(e.target.checked)} />
+                            Guest
+                          </label>
+                        </div>
                       : p.startingAvg}
                   </td>
                   <td style={tdStyle}>
                     {editId === p.id
                       ? <><button onClick={() => saveEdit(p.id)} style={btnSmall("#1a5c2a")}>Save</button>{" "}<button onClick={() => setEditId(null)} style={btnSmall("#888")}>Cancel</button></>
-                      : <><button onClick={() => { setEditId(p.id); setEditName(p.name); setEditAvg(p.startingAvg); }} style={btnSmall("#2d6a8a")}>Edit</button>{" "}
+                      : <><button onClick={() => { setEditId(p.id); setEditName(p.name); setEditAvg(p.startingAvg); setEditGuest(!!p.guest); }} style={btnSmall("#2d6a8a")}>Edit</button>{" "}
                           <button onClick={() => setConfirm(p)} style={btnSmall("#c0392b")}>Remove</button></>}
                   </td>
                 </tr>
@@ -507,6 +590,8 @@ function LeaderboardTab({ players, rounds, courses }) {
   }).filter((r): r is RoundResult => r !== null)
     .sort((a: RoundResult, b: RoundResult) => a.net - b.net);
 
+  const prize = calcPrizeMoney(round, results, players);
+
   return (
     <div>
       <Card title="Weekly Leaderboard">
@@ -526,6 +611,7 @@ function LeaderboardTab({ players, rounds, courses }) {
           <StatBox label="Par" value={par} />
           <StatBox label="Course" value={course?.name ?? "—"} />
           <StatBox label="Players" value={round.scores.length} />
+          <StatBox label="Total Purse" value={`$${prize.purse}`} />
         </div>
 
         {results.length > 0 && (
@@ -540,19 +626,23 @@ function LeaderboardTab({ players, rounds, courses }) {
 
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-            <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net Score</Th>
+            <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net Score</Th><Th>Payout</Th>
           </tr></thead>
           <tbody>
-            {results.slice(0, 4).map((r: RoundResult, i: number) => (
-              <tr key={r.player.id} style={{ borderBottom: "1px solid #eef2ee", background: i === 0 ? "#f0faf0" : "transparent" }}>
-                <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
-                <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{r.player.name}</td>
-                <td style={tdStyle}>{r.gross}</td>
-                <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
-                <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
-                <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
-              </tr>
-            ))}
+            {results.slice(0, 4).map((r: RoundResult, i: number) => {
+              const payout = prize.placements[i];
+              return (
+                <tr key={r.player.id} style={{ borderBottom: "1px solid #eef2ee", background: i === 0 ? "#f0faf0" : "transparent" }}>
+                  <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
+                  <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{r.player.name}</td>
+                  <td style={tdStyle}>{r.gross}</td>
+                  <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
+                  <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>{payout ? `$${payout.amount}` : "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
@@ -564,16 +654,20 @@ function LeaderboardTab({ players, rounds, courses }) {
             <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", marginBottom: 8 }}>📍 Closest to the Pin</div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
-                <Th>Hole</Th><Th>Winner</Th>
+                <Th>Hole</Th><Th>Winner</Th><Th>Payout</Th>
               </tr></thead>
               <tbody>
                 {round.ctp.map((c, i) => {
-                  const winner = c.winnerId ? players.find(p => p.id === parseInt(c.winnerId) || p.id === c.winnerId) : null;
+                  const winner = c.winnerId ? players.find(p => String(p.id) === String(c.winnerId)) : null;
+                  const ctpPayout = winner ? prize.ctpPayouts.find(cp => cp.player.id === winner.id) : null;
                   return (
                     <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
                       <td style={tdStyle}>Hole {c.hole || "—"}</td>
                       <td style={{ ...tdStyle, fontWeight: winner ? 700 : 400, color: winner ? "#1a5c2a" : "#999" }}>
                         {winner ? `🏅 ${winner.name}` : "No winner entered"}
+                      </td>
+                      <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>
+                        {ctpPayout ? `$${ctpPayout.amount}` : "—"}
                       </td>
                     </tr>
                   );
@@ -590,7 +684,7 @@ function LeaderboardTab({ players, rounds, courses }) {
 // ── HISTORY TAB ──────────────────────────────────────────────
 function HistoryTab({ players, rounds, courses }) {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
-  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(() => rounds.length > 0 ? rounds[rounds.length - 1].week : null);
 
   if (rounds.length === 0) return <Card title="Season History"><p style={{ color: "#888" }}>No rounds entered yet.</p></Card>;
 
@@ -624,15 +718,14 @@ function HistoryTab({ players, rounds, courses }) {
       }).filter(Boolean)
     : null;
 
-  const displayedResults = selectedWeek !== null ? allResults.filter((r: { round: Round }) => r.round.week === selectedWeek) : allResults;
+  const displayedResults = allResults.filter((r: { round: Round }) => r.round.week === selectedWeek);
 
   return (
     <div>
       <Card title="Season History — All Rounds">
         <div style={{ marginBottom: 16 }}>
           <Field label="Select Week">
-            <select value={selectedWeek ?? ""} onChange={e => setSelectedWeek(e.target.value ? parseInt(e.target.value) : null)} style={inputStyle}>
-              <option value="">— All Weeks —</option>
+            <select value={selectedWeek ?? ""} onChange={e => setSelectedWeek(parseInt(e.target.value))} style={inputStyle}>
               {rounds.map((r: Round) => {
                 const c = courses.find((x: Course) => x.id === r.courseId);
                 return <option key={r.week} value={r.week}>Week {r.week} — {c?.name ?? "?"} ({r.date})</option>;
@@ -835,7 +928,7 @@ function StatBox({ label, value }) {
     </div>
   );
 }
-const tdStyle = { padding: "9px 10px", fontSize: 14, verticalAlign: "middle" };
+const tdStyle = { padding: "9px 10px", fontSize: 14, verticalAlign: "middle", textAlign: "left" as const };
 const inputStyle = { padding: "7px 10px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14, outline: "none" };
 const btnStyle = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 7, padding: "9px 18px", cursor: "pointer", fontWeight: 600, fontSize: 14 });
 const btnSmall = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 5, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600 });
