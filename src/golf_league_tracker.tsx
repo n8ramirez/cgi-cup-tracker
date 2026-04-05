@@ -716,7 +716,7 @@ function LeaderboardTab({ players, rounds, courses }) {
                         {winner ? `🏅 ${winner.name}` : "—"}
                       </td>
                       <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>
-                        {ctpPayout ? `$${ctpPayout.amount}` : "—"}
+                        {ctpPayout && ctpPayout.amount > 0 ? `$${ctpPayout.amount}` : "—"}
                       </td>
                     </tr>
                   );
