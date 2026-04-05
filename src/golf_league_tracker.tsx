@@ -3,15 +3,7 @@ import { db } from "./firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 // ── TYPES ─────────────────────────────────────────────────────
-interface SideData { par: string; rating: string; slope: string; }
-interface Course {
-  id: number; name: string;
-  ratingMode: "18hole" | "9hole";
-  // 18-hole mode
-  par18?: string; rating18?: string; slope18?: string;
-  // 9-hole mode
-  front?: SideData; back?: SideData;
-}
+interface Course { id: number; name: string; }
 interface Player { id: number; name: string; startingAvg: number; }
 interface Score { playerId: number; gross: number; }
 interface CtpEntry { hole: string; winnerId: string | null; }
@@ -28,68 +20,41 @@ async function save(key: string, val: unknown) {
   try { await setDoc(doc(db, "league", key), { value: val }); } catch {}
 }
 
-// ── GHIN HANDICAP ────────────────────────────────────────────
-function getCourseSide(course: Course, _side: "front" | "back"): SideData {
-  if (course.ratingMode === "18hole") {
-    const par9 = course.par18 ? String(Math.round(parseFloat(course.par18) / 2 * 10) / 10) : "";
-    const rating9 = course.rating18 ? String(Math.round(parseFloat(course.rating18) / 2 * 10) / 10) : "";
-    return { par: par9, rating: rating9, slope: course.slope18 ?? "" };
+type RoundResult = { player: Player; gross: number; modAvg: number; strokes: number; net: number };
+
+// ── HANDICAP CALCULATIONS ────────────────────────────────────
+// Modified Average: rolls forward each week based on actual score vs current avg.
+// If player scored worse (gross > prevAvg): avg increases by only 20% of the difference.
+// If player scored better (gross <= prevAvg): avg moves to the midpoint.
+function calcModifiedAvg(prevAvg: number, gross: number): number {
+  if (gross > prevAvg) {
+    return Math.round((prevAvg + 0.2 * (gross - prevAvg)) * 100) / 100;
+  } else {
+    return Math.round((prevAvg + gross) / 2 * 100) / 100;
   }
-  return (_side === "front" ? course.front : course.back) ?? { par: "", rating: "", slope: "" };
 }
 
-function calcDifferential(gross: number, rating: number, slope: number): number {
-  return Math.round((113 / slope) * (gross - rating) * 100) / 100;
-}
-
-function getDiffLookup(n: number): { count: number; adj: number } {
-  if (n <= 0)   return { count: 0, adj: 0 };
-  if (n <= 2)   return { count: 1, adj: 0 };
-  if (n === 3)  return { count: 1, adj: -2.0 };
-  if (n === 4)  return { count: 1, adj: -1.0 };
-  if (n === 5)  return { count: 1, adj: -0.5 };
-  if (n <= 8)   return { count: 2, adj: 0 };
-  if (n <= 11)  return { count: 3, adj: 0 };
-  if (n <= 14)  return { count: 4, adj: 0 };
-  if (n === 15) return { count: 5, adj: 0 };
-  if (n <= 17)  return { count: 6, adj: 0 };
-  if (n <= 19)  return { count: 7, adj: 0 };
-  return { count: 8, adj: 0 };
-}
-
-function calcHandicapIndex(diffs: number[]): number | null {
-  if (diffs.length === 0) return null;
-  const sorted = [...diffs].sort((a, b) => a - b);
-  const { count, adj } = getDiffLookup(sorted.length);
-  if (count === 0) return null;
-  const best = sorted.slice(0, count);
-  const avg = best.reduce((s, d) => s + d, 0) / count;
-  return Math.round((avg + adj) * 0.96 * 10) / 10;
-}
-
-function calcCourseHandicap(hi: number, slope: number, rating: number, par: number): number {
-  return Math.round((hi * (slope / 113) + (rating - par)) * 10) / 10;
-}
-
-function getStartingDiff(player: Player): number {
-  return parseFloat(String(player.startingAvg)) - 36;
-}
-
-function getDifferentialsBeforeRound(player: Player, rounds: Round[], courses: Course[], roundIndex: number): number[] {
-  const diffs: number[] = [];
-  diffs.push(getStartingDiff(player));
+// Returns the Modified Average to use when calculating strokes for a given round.
+// roundIndex 0 = use startingAvg; roundIndex N = avg after N prior rounds.
+function getModifiedAvgBeforeRound(player: Player, rounds: Round[], roundIndex: number): number {
+  let avg = parseFloat(String(player.startingAvg));
   for (let i = 0; i < roundIndex; i++) {
-    const round = rounds[i];
-    const score = round.scores.find(s => s.playerId === player.id);
+    const score = rounds[i].scores.find(s => s.playerId === player.id);
     if (!score || score.gross === undefined || isNaN(score.gross)) continue;
-    if (!round.courseId || !round.side) continue;
-    const course = courses.find(c => c.id === round.courseId);
-    if (!course) continue;
-    const side = getCourseSide(course, round.side);
-    if (!side?.rating || !side?.slope) continue;
-    diffs.push(calcDifferential(score.gross, parseFloat(side.rating), parseFloat(side.slope)));
+    avg = calcModifiedAvg(avg, score.gross);
   }
-  return diffs;
+  return avg;
+}
+
+// Strokes = (par − modifiedAvg) × factor, rounded to 1 decimal.
+// Factor 0.83 applied when avg >= par (higher handicapper); full difference when avg < par.
+// Result is negative for high-handicappers (lowers net score) and positive for scratch/plus players.
+function calcStrokes(modAvg: number, par: number): number {
+  if (modAvg >= par) {
+    return Math.round((par - modAvg) * 0.83 * 10) / 10;
+  } else {
+    return Math.round((par - modAvg) * 10) / 10;
+  }
 }
 
 // ── CONFIRM DIALOG ───────────────────────────────────────────
@@ -183,46 +148,21 @@ export default function App() {
 }
 
 // ── COURSES TAB ──────────────────────────────────────────────
-const emptyCourseForm = () => ({ name: "", par18: "", rating18: "", slope18: "" });
-type CourseForm = ReturnType<typeof emptyCourseForm>;
-
-function CourseFormFields({ form, patch }: { form: CourseForm; patch: (p: Partial<CourseForm>) => void }) {
-  return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-      <Field label="18-Hole Par">
-        <input type="number" value={form.par18} onChange={e => patch({ par18: e.target.value })} placeholder="72" style={{ ...inputStyle, width: 70 }} />
-      </Field>
-      <Field label="18-Hole Course Rating">
-        <input type="number" step="0.1" value={form.rating18} onChange={e => patch({ rating18: e.target.value })} placeholder="70.2" style={{ ...inputStyle, width: 110 }} />
-      </Field>
-      <Field label="Slope">
-        <input type="number" value={form.slope18} onChange={e => patch({ slope18: e.target.value })} placeholder="128" style={{ ...inputStyle, width: 80 }} />
-      </Field>
-    </div>
-  );
-}
-
 function CoursesTab({ courses, setCourses }: { courses: Course[]; setCourses: (u: (prev: Course[]) => Course[]) => void }) {
-  const [form, setForm] = useState<CourseForm>(emptyCourseForm());
+  const [name, setName] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
   const [confirm, setConfirm] = useState<Course | null>(null);
 
-  const patch = (p: Partial<CourseForm>) => setForm(prev => ({ ...prev, ...p }));
-
   const addCourse = () => {
-    if (!form.name.trim()) return;
-    setCourses(prev => [...prev, { id: Date.now(), name: form.name.trim(), ratingMode: "18hole", par18: form.par18, rating18: form.rating18, slope18: form.slope18 }]);
-    setForm(emptyCourseForm());
+    if (!name.trim()) return;
+    setCourses(prev => [...prev, { id: Date.now(), name: name.trim() }]);
+    setName("");
   };
 
   const saveEdit = (id: number) => {
-    setCourses(prev => prev.map(c => c.id === id ? { ...c, name: form.name.trim(), par18: form.par18, rating18: form.rating18, slope18: form.slope18 } : c));
+    setCourses(prev => prev.map(c => c.id === id ? { ...c, name: editName.trim() } : c));
     setEditId(null);
-  };
-
-  const startEdit = (c: Course) => {
-    setEditId(c.id);
-    setForm({ name: c.name, par18: c.par18 ?? "", rating18: c.rating18 ?? "", slope18: c.slope18 ?? "" });
   };
 
   const doRemove = () => {
@@ -235,63 +175,33 @@ function CoursesTab({ courses, setCourses }: { courses: Course[]; setCourses: (u
     <div>
       {confirm && <ConfirmDialog message={`Remove "${confirm.name}"?`} onConfirm={doRemove} onCancel={() => setConfirm(null)} />}
       <Card title="Add Course">
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Course Name">
-            <input value={form.name} onChange={e => patch({ name: e.target.value })} placeholder="e.g. Pebble Beach GC" style={{ ...inputStyle, maxWidth: 300 }} />
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Plum Creek GC" style={{ ...inputStyle, minWidth: 260 }} onKeyDown={e => e.key === "Enter" && addCourse()} />
           </Field>
-          <CourseFormFields form={form} patch={patch} />
-          {form.par18 && form.rating18 && (
-            <div style={{ fontSize: 12, color: "#888" }}>
-              9-hole values derived — Par: {Math.round(parseFloat(form.par18) / 2 * 10) / 10}, Rating: {Math.round(parseFloat(form.rating18) / 2 * 10) / 10}, Slope: {form.slope18}
-            </div>
-          )}
-          <div><button onClick={addCourse} style={btnStyle("#1a5c2a")}>Add Course</button></div>
+          <button onClick={addCourse} style={btnStyle("#1a5c2a")}>Add Course</button>
         </div>
       </Card>
 
       <Card title={`Courses (${courses.length})`}>
         {courses.length === 0 && <p style={{ color: "#888", margin: 0 }}>No courses yet. Add one above.</p>}
-        {courses.map(c => {
-          const derived = getCourseSide(c, "front");
-          return (
-            <div key={c.id} style={{ border: "1px solid #e0eee0", borderRadius: 8, padding: "14px 16px", marginBottom: 12 }}>
-              {editId === c.id ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <Field label="Course Name">
-                    <input value={form.name} onChange={e => patch({ name: e.target.value })} style={{ ...inputStyle, maxWidth: 300 }} />
-                  </Field>
-                  <CourseFormFields form={form} patch={patch} />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => saveEdit(c.id)} style={btnSmall("#1a5c2a")}>Save</button>
-                    <button onClick={() => setEditId(null)} style={btnSmall("#888")}>Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", marginBottom: 8 }}>{c.name}</div>
-                  <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead><tr style={{ borderBottom: "1px solid #e0eee0" }}>
-                      <Th>18-Hole Par</Th><Th>18-Hole Rating</Th><Th>Slope</Th><Th>9-Hole Par</Th><Th>9-Hole Rating</Th>
-                    </tr></thead>
-                    <tbody>
-                      <tr>
-                        <td style={tdStyle}>{c.par18 ?? "—"}</td>
-                        <td style={tdStyle}>{c.rating18 ?? "—"}</td>
-                        <td style={tdStyle}>{c.slope18 ?? "—"}</td>
-                        <td style={tdStyle}>{derived.par || "—"}</td>
-                        <td style={tdStyle}>{derived.rating || "—"}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                    <button onClick={() => startEdit(c)} style={btnSmall("#2d6a8a")}>Edit</button>
-                    <button onClick={() => setConfirm(c)} style={btnSmall("#c0392b")}>Remove</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {courses.map(c => (
+          <div key={c.id} style={{ border: "1px solid #e0eee0", borderRadius: 8, padding: "14px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+            {editId === c.id ? (
+              <>
+                <input value={editName} onChange={e => setEditName(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={() => saveEdit(c.id)} style={btnSmall("#1a5c2a")}>Save</button>
+                <button onClick={() => setEditId(null)} style={btnSmall("#888")}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", flex: 1 }}>{c.name}</div>
+                <button onClick={() => { setEditId(c.id); setEditName(c.name); }} style={btnSmall("#2d6a8a")}>Edit</button>
+                <button onClick={() => setConfirm(c)} style={btnSmall("#c0392b")}>Remove</button>
+              </>
+            )}
+          </div>
+        ))}
       </Card>
     </div>
   );
@@ -390,13 +300,6 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
   const [confirm, setConfirm] = useState(null);
 
   const existingRound = rounds.find(r => r.week === weekNum);
-  const selectedCourse = courses.find(c => c.id === parseInt(courseId));
-  const selectedSideData = selectedCourse ? getCourseSide(selectedCourse, side) : null;
-
-  // Default par from course when course/side changes (new rounds only)
-  useEffect(() => {
-    if (!existingRound && selectedSideData?.par) setPar(selectedSideData.par);
-  }, [courseId, side]);
 
   useEffect(() => {
     if (existingRound) {
@@ -436,7 +339,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
       .filter(s => s.gross !== "" && !isNaN(s.gross));
     if (scores.length === 0) return alert("Enter at least one score.");
     const ctp = ctpHoles.map(c => ({ hole: c.hole, winnerId: c.winnerId || null }));
-    const roundPar = parseFloat(par) > 0 ? parseFloat(par) : parseFloat(selectedSideData?.par ?? "0");
+    const roundPar = parseFloat(par) > 0 ? parseFloat(par) : 0;
     const round = { id: existingRound?.id || Date.now(), week: weekNum, date, courseId: parseInt(courseId), side, par: roundPar, scores, ctp };
     setRounds(prev => [...prev.filter(r => r.week !== weekNum), round].sort((a, b) => a.week - b.week));
     alert(`Week ${weekNum} scores saved!`);
@@ -478,15 +381,11 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
           </Field>
         </div>
 
-        {selectedSideData && (
-          <div style={{ background: "#f5fbf5", border: "1px solid #cde8cd", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 13, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
-            <Field label="Par (editable)">
-              <input type="number" value={par} onChange={e => setPar(e.target.value)} style={{ ...inputStyle, width: 70, fontSize: 13 }} />
-            </Field>
-            <span style={{ alignSelf: "center" }}><strong>Rating:</strong> {selectedSideData.rating}</span>
-            <span style={{ alignSelf: "center" }}><strong>Slope:</strong> {selectedSideData.slope}</span>
-          </div>
-        )}
+        <div style={{ background: "#f5fbf5", border: "1px solid #cde8cd", borderRadius: 6, padding: "8px 14px", marginBottom: 12, fontSize: 13, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <Field label="Par">
+            <input type="number" value={par} onChange={e => setPar(e.target.value)} placeholder="e.g. 36" style={{ ...inputStyle, width: 80, fontSize: 13 }} />
+          </Field>
+        </div>
 
         {courses.length === 0 && <p style={{ color: "#c0392b", fontSize: 13 }}>⚠️ Add a course in the Courses tab first.</p>}
         {existingRound && <div style={{ background: "#fff8e1", border: "1px solid #f0c040", borderRadius: 6, padding: "8px 12px", marginBottom: 12, fontSize: 13 }}>⚠️ Editing existing Week {weekNum} scores.</div>}
@@ -596,18 +495,17 @@ function LeaderboardTab({ players, rounds, courses }) {
 
   const roundIndex = rounds.findIndex(r => r.week === selectedWeek);
   const course = courses.find(c => c.id === round.courseId);
-  const sideData = course ? getCourseSide(course, round.side) : null;
+  const par = round.par || 36;
 
   const results = round.scores.map(s => {
     const player = players.find(p => p.id === s.playerId);
-    if (!player || !sideData) return null;
-    const diffs = getDifferentialsBeforeRound(player, rounds, courses, roundIndex);
-    const hi = calcHandicapIndex(diffs);
-    const ch = hi !== null ? calcCourseHandicap(hi, parseFloat(sideData.slope), parseFloat(sideData.rating), round.par || parseFloat(sideData.par)) : null;
-    const net = ch !== null ? s.gross - ch : null;
-    const diff = calcDifferential(s.gross, parseFloat(sideData.rating), parseFloat(sideData.slope));
-    return { player, gross: s.gross, hi, ch, net, diff };
-  }).filter(r => r && r.net !== null).sort((a, b) => a.net - b.net);
+    if (!player) return null;
+    const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
+    const strokes = calcStrokes(modAvg, par);
+    const net = s.gross + strokes;
+    return { player, gross: s.gross, modAvg, strokes, net };
+  }).filter((r): r is RoundResult => r !== null)
+    .sort((a: RoundResult, b: RoundResult) => a.net - b.net);
 
   return (
     <div>
@@ -625,9 +523,8 @@ function LeaderboardTab({ players, rounds, courses }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
           <StatBox label="Week" value={`Week ${round.week}`} />
           <StatBox label="Date" value={round.date} />
-          {sideData && <StatBox label="Par" value={round.par || sideData.par} />}
-          {sideData && <StatBox label="Rating" value={sideData.rating} />}
-          {sideData && <StatBox label="Slope" value={sideData.slope} />}
+          <StatBox label="Par" value={par} />
+          <StatBox label="Course" value={course?.name ?? "—"} />
           <StatBox label="Players" value={round.scores.length} />
         </div>
 
@@ -636,31 +533,30 @@ function LeaderboardTab({ players, rounds, courses }) {
             <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>🏆 WINNER</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{results[0].player.name}</div>
             <div style={{ fontSize: 14, opacity: 0.9, marginTop: 4 }}>
-              Net: {results[0].net?.toFixed(1)} &nbsp;|&nbsp; Gross: {results[0].gross} &nbsp;|&nbsp; HI: {results[0].hi?.toFixed(1)} &nbsp;|&nbsp; Course HCP: {results[0].ch}
+              Net: {results[0].net.toFixed(1)} &nbsp;|&nbsp; Gross: {results[0].gross} &nbsp;|&nbsp; Mod Avg: {results[0].modAvg.toFixed(2)} &nbsp;|&nbsp; Strokes: {results[0].strokes.toFixed(1)}
             </div>
           </div>
         )}
 
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-            <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Differential</Th><Th>Handicap Index</Th><Th>Course HCP</Th><Th>Net Score</Th>
+            <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net Score</Th>
           </tr></thead>
           <tbody>
-            {results.slice(0, 4).map((r: typeof results[number], i: number) => (
+            {results.slice(0, 4).map((r: RoundResult, i: number) => (
               <tr key={r.player.id} style={{ borderBottom: "1px solid #eef2ee", background: i === 0 ? "#f0faf0" : "transparent" }}>
                 <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{i + 1}</td>
                 <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400 }}>{r.player.name}</td>
                 <td style={tdStyle}>{r.gross}</td>
-                <td style={tdStyle}>{r.diff.toFixed(1)}</td>
-                <td style={tdStyle}>{r.hi !== null ? r.hi.toFixed(1) : "—"}</td>
-                <td style={tdStyle}>{r.ch !== null ? r.ch : "—"}</td>
-                <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net?.toFixed(1)}</td>
+                <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
+                <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
+                <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
               </tr>
             ))}
           </tbody>
         </table>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
-          * Handicap Index uses USGA differential method (best N of available × 0.96). Net = Gross − Course Handicap.
+          * Strokes = (Par − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes (strokes are negative for higher handicappers). Modified Avg updates each week based on actual scores.
         </p>
 
         {round.ctp && round.ctp.some(c => c.hole) && (
@@ -698,37 +594,33 @@ function HistoryTab({ players, rounds, courses }) {
 
   if (rounds.length === 0) return <Card title="Season History"><p style={{ color: "#888" }}>No rounds entered yet.</p></Card>;
 
-  const allResults = rounds.map((round, roundIndex) => {
-    const course = courses.find(c => c.id === round.courseId);
-    const sideData = course ? getCourseSide(course, round.side) : null;
-    const scores = round.scores.map(s => {
-      const player = players.find(p => p.id === s.playerId);
-      if (!player || !sideData) return null;
-      const diffs = getDifferentialsBeforeRound(player, rounds, courses, roundIndex);
-      const hi = calcHandicapIndex(diffs);
-      const ch = hi !== null ? calcCourseHandicap(hi, parseFloat(sideData.slope), parseFloat(sideData.rating), round.par || parseFloat(sideData.par)) : null;
-      const net = ch !== null ? s.gross - ch : null;
-      return { player, gross: s.gross, hi, ch, net };
-    }).filter(r => r && r.net !== null).sort((a, b) => a.net - b.net);
-    return { round, scores, course, sideData };
+  const allResults = rounds.map((round: Round, roundIndex: number) => {
+    const course = courses.find((c: Course) => c.id === round.courseId);
+    const par = round.par || 36;
+    const scores = round.scores.map((s: Score) => {
+      const player = players.find((p: Player) => p.id === s.playerId);
+      if (!player) return null;
+      const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
+      const strokes = calcStrokes(modAvg, par);
+      const net = s.gross + strokes;
+      return { player, gross: s.gross, modAvg, strokes, net };
+    }).filter((r): r is RoundResult => r !== null).sort((a: RoundResult, b: RoundResult) => a.net - b.net);
+    return { round, scores, course, par };
   });
 
   const playerHistory = selectedPlayer
-    ? rounds.map((round, roundIndex) => {
-        const player = players.find(p => p.id === selectedPlayer);
-        const score = round.scores.find(s => s.playerId === selectedPlayer);
+    ? rounds.map((round: Round, roundIndex: number) => {
+        const player = players.find((p: Player) => p.id === selectedPlayer);
+        const score = round.scores.find((s: Score) => s.playerId === selectedPlayer);
         if (!score || !player) return null;
-        const course = courses.find(c => c.id === round.courseId);
-        const sideData = course ? getCourseSide(course, round.side) : null;
-        if (!sideData) return null;
-        const diffsBefore = getDifferentialsBeforeRound(player, rounds, courses, roundIndex);
-        const hiBefore = calcHandicapIndex(diffsBefore);
-        const ch = hiBefore !== null ? calcCourseHandicap(hiBefore, parseFloat(sideData.slope), parseFloat(sideData.rating), round.par || parseFloat(sideData.par)) : null;
-        const net = ch !== null ? score.gross - ch : null;
-        const diff = calcDifferential(score.gross, parseFloat(sideData.rating), parseFloat(sideData.slope));
-        const hiAfter = calcHandicapIndex([...diffsBefore, diff]);
-        const rank = allResults[roundIndex].scores.findIndex(s => s.player.id === selectedPlayer) + 1;
-        return { round, gross: score.gross, hiBefore, hiAfter, ch, net, diff, rank, total: allResults[roundIndex].scores.length, course, sideData };
+        const course = courses.find((c: Course) => c.id === round.courseId);
+        const par = round.par || 36;
+        const modAvgBefore = getModifiedAvgBeforeRound(player, rounds, roundIndex);
+        const strokes = calcStrokes(modAvgBefore, par);
+        const net = score.gross + strokes;
+        const modAvgAfter = calcModifiedAvg(modAvgBefore, score.gross);
+        const rank = allResults[roundIndex].scores.findIndex((s: RoundResult) => s.player.id === selectedPlayer) + 1;
+        return { round, gross: score.gross, modAvgBefore, modAvgAfter, strokes, net, rank, total: allResults[roundIndex].scores.length, course, par };
       }).filter(Boolean)
     : null;
 
@@ -748,24 +640,24 @@ function HistoryTab({ players, rounds, courses }) {
             </select>
           </Field>
         </div>
-        {displayedResults.map(({ round, scores, course, sideData }: { round: Round; scores: { player: Player; gross: number; hi: number | null; ch: number | null; net: number | null }[]; course: Course | undefined; sideData: SideData | null }) => (
+        {displayedResults.map(({ round, scores, course, par }: { round: Round; scores: RoundResult[]; course: Course | undefined; par: number }) => (
           <div key={round.week} style={{ marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: "#1a5c2a", marginBottom: 6 }}>
-              Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {round.par || (sideData?.par ?? "?")}
+              Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {par}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
-                <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>HI</Th><Th>Course HCP</Th><Th>Net</Th>
+                <Th>#</Th><Th>Player</Th><Th>Gross</Th><Th>Mod Avg</Th><Th>Strokes</Th><Th>Net</Th>
               </tr></thead>
               <tbody>
-                {scores.map((s, i) => (
+                {scores.map((s: RoundResult, i: number) => (
                   <tr key={s.player.id} style={{ borderBottom: "1px solid #eef2ee" }}>
                     <td style={tdStyle}>{i + 1}</td>
                     <td style={tdStyle}>{s.player.name}</td>
                     <td style={tdStyle}>{s.gross}</td>
-                    <td style={tdStyle}>{s.hi !== null ? s.hi.toFixed(1) : "—"}</td>
-                    <td style={tdStyle}>{s.ch !== null ? s.ch : "—"}</td>
-                    <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "#1a5c2a" : "#333" }}>{s.net}</td>
+                    <td style={tdStyle}>{s.modAvg.toFixed(2)}</td>
+                    <td style={tdStyle}>{s.strokes.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "#1a5c2a" : "#333" }}>{s.net.toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -792,7 +684,7 @@ function HistoryTab({ players, rounds, courses }) {
         {playerHistory && (
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12, fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
-              <Th>Week</Th><Th>Course</Th><Th>9</Th><Th>Par</Th><Th>Gross</Th><Th>Differential</Th><Th>HI Before</Th><Th>HI After</Th><Th>Course HCP</Th><Th>Net</Th><Th>Finish</Th>
+              <Th>Week</Th><Th>Course</Th><Th>9</Th><Th>Par</Th><Th>Gross</Th><Th>Mod Avg Before</Th><Th>Mod Avg After</Th><Th>Strokes</Th><Th>Net</Th><Th>Finish</Th>
             </tr></thead>
             <tbody>
               {playerHistory.map(h => (
@@ -800,15 +692,14 @@ function HistoryTab({ players, rounds, courses }) {
                   <td style={tdStyle}>Week {h.round.week}</td>
                   <td style={tdStyle}>{h.course?.name ?? "—"}</td>
                   <td style={tdStyle}>{h.round.side === "front" ? "Front" : "Back"}</td>
-                  <td style={tdStyle}>{h.round.par || h.sideData?.par || "—"}</td>
+                  <td style={tdStyle}>{h.par}</td>
                   <td style={tdStyle}>{h.gross}</td>
-                  <td style={tdStyle}>{h.diff.toFixed(1)}</td>
-                  <td style={tdStyle}>{h.hiBefore !== null ? h.hiBefore.toFixed(1) : "—"}</td>
-                  <td style={{ ...tdStyle, fontWeight: 600, color: h.hiAfter !== null && h.hiBefore !== null && h.hiAfter < h.hiBefore ? "#1a5c2a" : "#c0392b" }}>
-                    {h.hiAfter !== null ? h.hiAfter.toFixed(1) : "—"}
+                  <td style={tdStyle}>{h.modAvgBefore.toFixed(2)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: h.modAvgAfter < h.modAvgBefore ? "#1a5c2a" : "#c0392b" }}>
+                    {h.modAvgAfter.toFixed(2)}
                   </td>
-                  <td style={tdStyle}>{h.ch !== null ? h.ch : "—"}</td>
-                  <td style={tdStyle}>{h.net !== null ? h.net : "—"}</td>
+                  <td style={tdStyle}>{h.strokes.toFixed(1)}</td>
+                  <td style={tdStyle}>{h.net.toFixed(1)}</td>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{h.rank}/{h.total}</td>
                 </tr>
               ))}
@@ -829,122 +720,91 @@ function InfoTab() {
     </div>
   );
 
-  const lookup = [
-    [1, 2, 1], [3, 3, 1], [4, 4, 1], [5, 5, 1],
-    [6, 8, 2], [9, 11, 3], [12, 14, 4], [15, 15, 5],
-    [16, 17, 6], [18, 19, 7], [20, 20, 8],
-  ];
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
       <Card title="Overview">
         <p style={{ color: "#444", lineHeight: 1.7, margin: 0 }}>
-          The CGI Cup uses a <strong>USGA-based handicap system</strong> adapted for 9-hole weekly play.
-          Each week, players receive a <strong>Course Handicap</strong> calculated from their running
-          <strong> Handicap Index</strong>, which improves automatically as the season progresses.
-          Net scores are used to determine the weekly winner, giving every player a fair chance
-          regardless of skill level.
+          The CGI Cup uses a <strong>rolling Modified Average handicap system</strong> for 9-hole weekly play.
+          Each week, a player's strokes are calculated from their <strong>Modified Average</strong> — a running
+          average that updates automatically after every round. Net scores are used to determine
+          the weekly winner, giving every player a fair chance regardless of skill level.
         </p>
       </Card>
 
-      <Card title="Starting Handicap">
-        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How is a player's first Handicap Index set?</p>
+      <Card title="Starting Average">
+        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How is a player's starting point set?</p>
         <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          Before a player has any league rounds, their starting Handicap Index is seeded from their
-          9-hole average score using a simplified differential against a baseline par of 36:
+          Each player is assigned a <strong>Starting Average</strong> before the season begins. This is their
+          expected 9-hole gross score and serves as the baseline for Week 1 stroke calculations.
+          It is entered manually in the Players tab.
         </p>
-        {formula("Starting Differential  =  Starting Avg  −  36")}
-        {formula("Starting Handicap Index  =  Starting Differential  ×  0.96")}
+        {formula("Week 1 Modified Avg  =  Starting Average")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example: A player who averages 42 per 9 holes → Differential = 42 − 36 = 6.0 → HI = 5.8
+          Example: A player with a starting average of 42 will have a Modified Avg of 42.00 going into Week 1.
         </p>
       </Card>
 
-      <Card title="Weekly Score Differential">
-        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How is each round's differential calculated?</p>
+      <Card title="Modified Average">
+        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How does the Modified Average update each week?</p>
         <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          After each round, a <strong>Score Differential</strong> is calculated using the course's
-          official rating and slope. This measures how a player performed relative to the difficulty
-          of the course that day.
+          After each round, the Modified Average updates based on how the player scored relative to their current average.
+          Improvement is rewarded more aggressively than decline — a bad round only bleeds in 20%, while
+          a good round moves the average to the midpoint.
         </p>
-        {formula("Score Differential  =  (113 ÷ Slope)  ×  (Gross Score − Course Rating)")}
+        {formula("If gross > avg  →  New Avg  =  prevAvg + 0.2 × (gross − prevAvg)")}
+        {formula("If gross ≤ avg  →  New Avg  =  (prevAvg + gross) ÷ 2")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example: Gross 40, Course Rating 35.1, Slope 120 → (113 ÷ 120) × (40 − 35.1) = <strong>4.6</strong>
+          Example (played worse): prevAvg 42.00, gross 46 → 42 + 0.2 × (46 − 42) = <strong>42.80</strong>
         </p>
         <p style={{ color: "#666", fontSize: 13, margin: "4px 0 0" }}>
-          Note: Course Rating and Slope are derived from the 18-hole values entered in the Courses tab
-          (each 9-hole value = 18-hole value ÷ 2 for rating; slope remains the same).
+          Example (played better): prevAvg 42.00, gross 38 → (42 + 38) ÷ 2 = <strong>40.00</strong>
         </p>
-      </Card>
-
-      <Card title="Handicap Index">
-        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How does the Handicap Index update each week?</p>
-        <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          The Handicap Index is recalculated before each round using all differentials accumulated
-          so far (including the starting seed). The <strong>best (lowest) differentials</strong> are
-          selected based on how many rounds have been played, then averaged and multiplied by 0.96.
-        </p>
-        {formula("Handicap Index  =  Average of best N differentials  ×  0.96")}
-        <p style={{ color: "#555", fontSize: 13, fontWeight: 600, margin: "12px 0 6px" }}>How many differentials are used (N):</p>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "#f5fbf5", borderBottom: "2px solid #e0e8e0" }}>
-              <Th>Differentials Available</Th><Th>Best N Used</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {lookup.map(([min, max, n]) => (
-              <tr key={min} style={{ borderBottom: "1px solid #eef2ee" }}>
-                <td style={tdStyle}>{min === max ? min : `${min} – ${max}`}</td>
-                <td style={tdStyle}>{n}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p style={{ color: "#666", fontSize: 13, margin: "10px 0 0" }}>
-          With 3–5 differentials, a small adjustment is also applied (−2.0, −1.0, or −0.5)
-          to account for limited data early in the season.
-        </p>
-      </Card>
-
-      <Card title="Course Handicap">
-        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How is the weekly Course Handicap determined?</p>
-        <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          The Handicap Index is converted into a <strong>Course Handicap</strong> specific to the
-          course and 9 holes being played that week. This accounts for the difficulty of the
-          particular course relative to par.
-        </p>
-        {formula("Course Handicap  =  HI × (Slope ÷ 113)  +  (Course Rating − Par)")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example: HI 5.8, Slope 120, Rating 35.1, Par 36 → 5.8 × (120 ÷ 113) + (35.1 − 36) = <strong>5.3</strong>
+          The Modified Average used for a given week's stroke calculation is always the average <em>before</em> that round is played.
+        </p>
+      </Card>
+
+      <Card title="Weekly Strokes">
+        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How are weekly strokes calculated?</p>
+        <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
+          Strokes represent the handicap adjustment applied to a player's gross score.
+          Players who average above par receive negative strokes (lowering their net score).
+          Players who average below par receive positive strokes (raising their net score).
+          A factor of <strong>0.83</strong> is applied when the Modified Average is at or above par,
+          which prevents large handicap swings and keeps competition balanced.
+        </p>
+        {formula("If Mod Avg ≥ Par  →  Strokes  =  ROUND((Par − Mod Avg) × 0.83, 1)")}
+        {formula("If Mod Avg < Par  →  Strokes  =  ROUND(Par − Mod Avg, 1)")}
+        <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
+          Example: Mod Avg 42.00, Par 36 → (36 − 42) × 0.83 = <strong>−5.0 strokes</strong>
         </p>
         <p style={{ color: "#666", fontSize: 13, margin: "4px 0 0" }}>
-          The par used each week is set when scores are entered and can be adjusted if a hole
-          plays at a different par (e.g., hole 1 playing as par 3 vs par 4).
+          The par used each week is set when scores are entered and can be adjusted if a hole plays at a different par
+          (e.g., hole 1 playing as par 3 instead of par 4 changes the round par from 36 to 35).
         </p>
       </Card>
 
       <Card title="Net Score & Winner">
         <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How is the weekly winner determined?</p>
         <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          Each player's <strong>Net Score</strong> is their gross score minus their Course Handicap.
+          Each player's <strong>Net Score</strong> is their gross score plus their strokes (strokes are negative
+          for higher-handicap players, so this effectively subtracts them).
           The player with the <strong>lowest net score</strong> wins the week.
         </p>
-        {formula("Net Score  =  Gross Score  −  Course Handicap")}
+        {formula("Net Score  =  Gross Score  +  Strokes")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example: Gross 40, Course Handicap 5.3 → Net = <strong>34.7</strong>
+          Example: Gross 42, Strokes −5.0 → Net = <strong>37.0</strong>
         </p>
       </Card>
 
-      <Card title="How the Handicap Evolves Over the Season">
+      <Card title="How the Average Evolves Over the Season">
         <p style={{ color: "#444", lineHeight: 1.7, margin: 0 }}>
-          The Handicap Index is recalculated <strong>before each round</strong> — meaning a player's
-          handicap for Week 5 is based only on their starting seed plus rounds 1–4.
-          As more rounds are played, the index becomes more accurate because it draws from
-          more real data and fewer best-differentials are needed to represent true ability.
-          A strong round (low differential) will lower the HI; a poor round may not raise it
-          much since only the <em>best</em> differentials are used. This rewards consistent improvement.
+          The Modified Average is recalculated <strong>before each round</strong> — meaning a player's
+          strokes for Week 5 are based only on their starting average plus rounds 1–4.
+          Because bad rounds only raise the average by 20% of the overage, consistent improvement
+          is rewarded: playing well drops the average quickly, while one bad round barely moves it up.
+          This keeps handicaps fair and progressive throughout the season.
         </p>
       </Card>
 
