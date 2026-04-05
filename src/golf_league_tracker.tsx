@@ -546,7 +546,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
               </select>
             </Field>
           </div>
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
                 <Th>CTP #</Th><Th>Hole Number</Th><Th>Winner</Th>
@@ -575,7 +575,7 @@ function ScoresTab({ players, rounds, setRounds, courses }) {
 
       {rounds.length > 0 && (
         <Card title="Saved Rounds">
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, backgroundColor: "#fff" }}>
               <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
                 <Th style={stickyTh1}>Week</Th><Th>Date</Th><Th>Course</Th><Th>9</Th><Th>Players</Th><Th>Actions</Th>
@@ -669,7 +669,7 @@ function LeaderboardTab({ players, rounds, courses }) {
           </div>
         )}
 
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, backgroundColor: "#fff" }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
               <Th style={stickyTh1}>#</Th>
@@ -787,7 +787,7 @@ function HistoryTab({ players, rounds, courses }) {
               Week {round.week} &nbsp;·&nbsp; {round.date} &nbsp;·&nbsp; {course?.name ?? "?"} ({round.side === "front" ? "Front" : "Back"} 9) &nbsp;·&nbsp; Par {par}
               {round.doublePoints && <><br /><span style={{ background: "#1a5c2a", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>⚡ DOUBLE POINTS MAJOR WEEK</span></>}
             </div>
-            <div style={{ overflowX: "auto" }}>
+            <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
               <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13, backgroundColor: "#fff" }}>
                 <thead><tr style={{ borderBottom: "1px solid #cde0cd", background: "#f5fbf5" }}>
                   <Th style={stickyTh1}>#</Th>
@@ -828,7 +828,7 @@ function HistoryTab({ players, rounds, courses }) {
           </select>
         </Field>
         {playerHistory && (
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, marginTop: 12, fontSize: 13, backgroundColor: "#fff" }}>
               <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
                 <Th style={stickyTh1}>Week</Th>
@@ -906,7 +906,7 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
   return (
     <div>
       <Card title="CGI Cup Standings">
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, backgroundColor: "#fff" }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
               <Th style={stickyTh1}>#</Th>
@@ -934,7 +934,7 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
       </Card>
 
       <Card title="Weekly Points Breakdown">
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13, backgroundColor: "#fff" }}>
             <thead><tr style={{ borderBottom: "2px solid #e0e8e0", background: "#f5fbf5" }}>
               <Th style={stickyTh1}>Player</Th>
@@ -1131,10 +1131,10 @@ function StatBox({ label, value }) {
   );
 }
 const tdStyle = { padding: "9px 10px", fontSize: 14, verticalAlign: "middle", textAlign: "left" as const };
-const stickyTh1 = { position: "sticky" as const, left: 0, zIndex: 20, background: "#f5fbf5", backgroundColor: "#f5fbf5" };
-const stickyTh2 = { position: "sticky" as const, left: 40, zIndex: 20, background: "#f5fbf5", backgroundColor: "#f5fbf5", paddingRight: 16 };
-const stickyTd1 = { position: "sticky" as const, left: 0, zIndex: 10, background: "#fff", backgroundColor: "#fff" };
-const stickyTd2 = { position: "sticky" as const, left: 40, zIndex: 10, background: "#fff", backgroundColor: "#fff", paddingRight: 16 };
+const stickyTh1 = { position: "sticky" as const, left: 0, zIndex: 20, background: "#f5fbf5", backgroundColor: "#f5fbf5", minWidth: 44 };
+const stickyTh2 = { position: "sticky" as const, left: 44, zIndex: 20, background: "#f5fbf5", backgroundColor: "#f5fbf5", paddingRight: 16 };
+const stickyTd1 = { position: "sticky" as const, left: 0, zIndex: 10, background: "#fff", backgroundColor: "#fff", minWidth: 44 };
+const stickyTd2 = { position: "sticky" as const, left: 44, zIndex: 10, background: "#fff", backgroundColor: "#fff", paddingRight: 16 };
 const inputStyle = { padding: "7px 10px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14, outline: "none" };
 const btnStyle = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 7, padding: "9px 18px", cursor: "pointer", fontWeight: 600, fontSize: 14 });
 const btnSmall = (bg) => ({ background: bg, color: "#fff", border: "none", borderRadius: 5, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600 });
