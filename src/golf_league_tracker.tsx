@@ -682,7 +682,7 @@ function LeaderboardTab({ players, rounds, courses }) {
                   return (
                     <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
                       <td style={tdStyle}>Hole {c.hole || "—"}</td>
-                      <td style={{ ...tdStyle, fontWeight: winner ? 700 : 400, color: winner ? "#1a5c2a" : "#999" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700, color: winner ? "#1a5c2a" : "#333" }}>
                         {winner ? `🏅 ${winner.name}` : "—"}
                       </td>
                       <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>
