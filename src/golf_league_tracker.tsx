@@ -686,7 +686,7 @@ function LeaderboardTab({ players, rounds, courses }) {
                     <td style={tdStyle}>{r.gross}</td>
                     <td style={tdStyle}>{r.modAvg.toFixed(2)}</td>
                     <td style={tdStyle}>{r.strokes.toFixed(1)}</td>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: i === 0 ? "#1a5c2a" : "#333" }}>{r.net.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: "#333" }}>{r.net.toFixed(1)}</td>
                     <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>{payout ? `$${payout.amount}` : "—"}</td>
                   </tr>
                 );
@@ -695,7 +695,7 @@ function LeaderboardTab({ players, rounds, courses }) {
           </table>
         </div>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
-          * Strokes = (Par − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes (strokes are negative for higher handicappers). Modified Avg updates each week based on actual scores.
+          * Strokes = (Par − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes. Modified Avg updates each week based on actual scores.
         </p>
 
         {round.ctp && round.ctp.some(c => c.hole) && (
