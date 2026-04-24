@@ -62,6 +62,7 @@ interface PrizeMoney {
   purse: number;
   ctpPool: number;
   ctpPayouts: { player: Player; amount: number }[];
+  ctpPerWin: number;
   placements: { player: Player | null; label: string; amount: number }[];
 }
 
@@ -125,7 +126,7 @@ function calcPrizeMoney(round: Round, results: RoundResult[], players: Player[])
   });
   const ctpPayouts = Object.values(ctpMap);
 
-  return { purse, ctpPool, ctpPayouts, placements };
+  return { purse, ctpPool, ctpPayouts, ctpPerWin: perWin, placements };
 }
 
 // ── CGI CUP POINTS ───────────────────────────────────────────
@@ -631,7 +632,7 @@ function LeaderboardTab({ players, rounds, courses }) {
     const net = s.gross + strokes;
     return { player, gross: s.gross, modAvg, strokes, net };
   }).filter((r): r is RoundResult => r !== null)
-    .sort((a: RoundResult, b: RoundResult) => a.net - b.net);
+    .sort((a: RoundResult, b: RoundResult) => a.net - b.net || a.gross - b.gross);
 
   const prize = calcPrizeMoney(round, results, players);
 
@@ -708,7 +709,6 @@ function LeaderboardTab({ players, rounds, courses }) {
               <tbody>
                 {round.ctp.map((c, i) => {
                   const winner = c.winnerId ? players.find(p => String(p.id) === String(c.winnerId)) : null;
-                  const ctpPayout = winner ? prize.ctpPayouts.find(cp => cp.player.id === winner.id) : null;
                   return (
                     <tr key={i} style={{ borderBottom: "1px solid #eef2ee" }}>
                       <td style={tdStyle}>Hole {c.hole || "—"}</td>
@@ -716,7 +716,7 @@ function LeaderboardTab({ players, rounds, courses }) {
                         {winner ? `🏅 ${winner.name}` : "—"}
                       </td>
                       <td style={{ ...tdStyle, fontWeight: 700, color: "#1a5c2a" }}>
-                        {ctpPayout && ctpPayout.amount > 0 ? `$${ctpPayout.amount}` : "—"}
+                        {winner && prize.ctpPerWin > 0 ? `$${prize.ctpPerWin}` : "—"}
                       </td>
                     </tr>
                   );
@@ -1050,6 +1050,9 @@ function InfoTab() {
         {formula("Net Score  =  Gross Score  +  Strokes")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
           Example: Gross 42, Strokes −5.0 → Net = <strong>37.0</strong>
+        </p>
+        <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
+          <strong>Tiebreaker:</strong> If two players finish with the same net score, the player with the lower gross score is ranked higher.
         </p>
       </Card>
 
