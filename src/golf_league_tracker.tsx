@@ -23,38 +23,48 @@ async function save(key: string, val: unknown) {
 type RoundResult = { player: Player; gross: number; modAvg: number; strokes: number; net: number };
 
 // ── HANDICAP CALCULATIONS ────────────────────────────────────
-// Modified Average: rolls forward each week based on actual score vs current avg.
-// If player scored worse (gross > prevAvg): avg increases by only 20% of the difference.
-// If player scored better (gross <= prevAvg): avg moves to the midpoint.
-function calcModifiedAvg(prevAvg: number, gross: number): number {
-  if (gross > prevAvg) {
-    return Math.round((prevAvg + 0.2 * (gross - prevAvg)) * 100) / 100;
+// All scoring is normalized to a PAR-36 nine — the league's historical baseline and the
+// anchor the original handicap system was built around. Because the course is now played
+// at varying pars (front 9 ranging par 34–36), every gross is first converted to its
+// par-36 equivalent so rounds at different pars are directly comparable.
+const PAR_ANCHOR = 36;
+
+// Convert a gross to its par-36 equivalent (e.g. a 38 on par 34 counts as a 40 on par 36).
+function toParAnchor(gross: number, par: number): number {
+  return gross + (PAR_ANCHOR - (par || PAR_ANCHOR));
+}
+
+// Modified Average: rolls forward each week based on the par-36-adjusted score vs current avg.
+// If player scored worse (adjGross > prevAvg): avg increases by only 20% of the difference.
+// If player scored better (adjGross <= prevAvg): avg moves to the midpoint.
+function calcModifiedAvg(prevAvg: number, adjGross: number): number {
+  if (adjGross > prevAvg) {
+    return Math.round((prevAvg + 0.2 * (adjGross - prevAvg)) * 100) / 100;
   } else {
-    return Math.round((prevAvg + gross) / 2 * 100) / 100;
+    return Math.round((prevAvg + adjGross) / 2 * 100) / 100;
   }
 }
 
 // Returns the Modified Average to use when calculating strokes for a given round.
 // roundIndex 0 = use startingAvg; roundIndex N = avg after N prior rounds.
+// Each prior gross is normalized to par-36 before it updates the average.
 function getModifiedAvgBeforeRound(player: Player, rounds: Round[], roundIndex: number): number {
   let avg = parseFloat(String(player.startingAvg));
   for (let i = 0; i < roundIndex; i++) {
     const score = rounds[i].scores.find(s => s.playerId === player.id);
     if (!score || score.gross === undefined || isNaN(score.gross)) continue;
-    avg = calcModifiedAvg(avg, score.gross);
+    avg = calcModifiedAvg(avg, toParAnchor(score.gross, rounds[i].par));
   }
   return avg;
 }
 
-// Strokes = (par − modifiedAvg) × factor, rounded to 1 decimal.
-// Factor 0.83 applied when avg >= par (higher handicapper); full difference when avg < par.
-// Result is negative for high-handicappers (lowers net score) and positive for scratch/plus players.
-function calcStrokes(modAvg: number, par: number): number {
-  if (modAvg >= par) {
-    return Math.round((par - modAvg) * 0.83 * 10) / 10;
-  } else {
-    return Math.round((par - modAvg) * 10) / 10;
-  }
+// Strokes = (36 − modifiedAvg) × 0.83, rounded to 1 decimal.
+// The modified average is already par-36 normalized, so the anchor is always 36.
+// The 0.83 allowance applies symmetrically: high-handicappers (avg above 36) receive 83%
+// of their difference as help; sub-par players (avg below 36) give 83% of theirs — not full
+// strength — so better players are not over-taxed for posting low scores.
+function calcStrokes(modAvg: number): number {
+  return Math.round((PAR_ANCHOR - modAvg) * 0.83 * 10) / 10;
 }
 
 // ── PRIZE MONEY ──────────────────────────────────────────────
@@ -628,7 +638,7 @@ function LeaderboardTab({ players, rounds, courses }) {
     const player = players.find(p => p.id === s.playerId);
     if (!player) return null;
     const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
-    const strokes = calcStrokes(modAvg, par);
+    const strokes = calcStrokes(modAvg);
     const net = s.gross + strokes;
     return { player, gross: s.gross, modAvg, strokes, net };
   }).filter((r): r is RoundResult => r !== null)
@@ -696,7 +706,7 @@ function LeaderboardTab({ players, rounds, courses }) {
           </table>
         </div>
         <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
-          * Strokes = (Par − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes. Modified Avg updates each week based on actual scores.
+          * Scores are normalized to a par-36 nine, so weeks at different pars are comparable. Strokes = (36 − Modified Avg) × 0.83, rounded to 1 decimal. Net = Gross + Strokes. Modified Avg updates each week based on your par-36-adjusted scores.
         </p>
 
         {round.ctp && round.ctp.some(c => c.hole) && (
@@ -743,7 +753,7 @@ function HistoryTab({ players, rounds, courses }) {
       const player = players.find((p: Player) => p.id === s.playerId);
       if (!player) return null;
       const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
-      const strokes = calcStrokes(modAvg, par);
+      const strokes = calcStrokes(modAvg);
       const net = s.gross + strokes;
       return { player, gross: s.gross, modAvg, strokes, net };
     }).filter((r): r is RoundResult => r !== null).sort((a: RoundResult, b: RoundResult) => a.net - b.net);
@@ -758,9 +768,9 @@ function HistoryTab({ players, rounds, courses }) {
         const course = courses.find((c: Course) => c.id === round.courseId);
         const par = round.par || 36;
         const modAvgBefore = getModifiedAvgBeforeRound(player, rounds, roundIndex);
-        const strokes = calcStrokes(modAvgBefore, par);
+        const strokes = calcStrokes(modAvgBefore);
         const net = score.gross + strokes;
-        const modAvgAfter = calcModifiedAvg(modAvgBefore, score.gross);
+        const modAvgAfter = calcModifiedAvg(modAvgBefore, toParAnchor(score.gross, par));
         const rank = allResults[roundIndex].scores.findIndex((s: RoundResult) => s.player.id === selectedPlayer) + 1;
         return { round, gross: score.gross, modAvgBefore, modAvgAfter, strokes, net, rank, total: allResults[roundIndex].scores.length, course, par };
       }).filter(Boolean)
@@ -873,14 +883,13 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
   });
 
   rounds.forEach((round: Round, roundIndex: number) => {
-    const par = round.par || 36;
     const isDouble = !!round.doublePoints;
 
     const results = round.scores.map((s: Score) => {
       const player = players.find((p: Player) => p.id === s.playerId);
       if (!player) return null;
       const modAvg = getModifiedAvgBeforeRound(player, rounds, roundIndex);
-      const strokes = calcStrokes(modAvg, par);
+      const strokes = calcStrokes(modAvg);
       const net = s.gross + strokes;
       return { player, net };
     }).filter((r): r is { player: Player; net: number } => r !== null)
@@ -966,8 +975,46 @@ function StandingsTab({ players, rounds }: { players: Player[]; rounds: Round[] 
   );
 }
 
+// ── V2 "WHAT'S NEW" MODAL ────────────────────────────────────
+function V2Modal({ onClose }: { onClose: () => void }) {
+  const item = (title: string, body: React.ReactNode) => (
+    <li style={{ marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, color: "#1a5c2a", fontSize: 14, marginBottom: 3 }}>{title}</div>
+      <div style={{ color: "#444", fontSize: 13.5, lineHeight: 1.6 }}>{body}</div>
+    </li>
+  );
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.3)" }}>
+        <div style={{ background: "linear-gradient(135deg, #1a5c2a, #2d8a45)", color: "#fff", padding: "18px 24px", borderRadius: "14px 14px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "2px 9px", fontSize: 14, fontWeight: 800 }}>V2</span>
+            <span style={{ fontSize: 18, fontWeight: 700 }}>CGI Cup Tracker V2</span>
+          </div>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontSize: 16, fontWeight: 700, lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ padding: "20px 24px 24px", textAlign: "left" }}>
+          <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 16px", fontSize: 14, textAlign: "left" }}>
+            This update overhauls how strokes are calculated so the handicap system stays fair now that 9 hole rounds are played
+            at <strong>varying pars</strong>.
+            Here's what changed:
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 20, textAlign: "left" }}>
+            {item("Par normalization", <>Every gross score is now converted to its <strong>par-36 equivalent</strong> before it affects your Modified Average. Previously, a player's running average mixed together raw scores from weeks played at different pars, while strokes were measured against whatever par was set that week. When the course par changed, that mismatch could distort a player's strokes. Now every score is placed on the same par-36 basis before strokes are calculated, so a change in course par no longer warps the handicap.</>)}
+            {item("Standardized stroke allowance", <>Strokes are now calculated by a single rule — (36 − Mod Avg) × 0.83 — applied to <strong>all</strong> players. Scores under par are now capped at the same 83% allowance as scores equal to or over par (previously 100%). Scores under par are no longer over-penalized.</>)}
+          </ul>
+          <p style={{ color: "#888", fontSize: 12.5, lineHeight: 1.6, margin: "16px 0 0", borderTop: "1px solid #eef2ee", paddingTop: 12, textAlign: "left" }}>
+            Full formulas and worked examples are documented in the sections below.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── INFO TAB ─────────────────────────────────────────────────
 function InfoTab() {
+  const [showV2, setShowV2] = useState(false);
 
   const formula = (text: string) => (
     <div style={{ background: "#f5fbf5", border: "1px solid #cde8cd", borderRadius: 6, padding: "8px 14px", fontFamily: "monospace", fontSize: 13, margin: "8px 0" }}>
@@ -977,6 +1024,23 @@ function InfoTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {showV2 && <V2Modal onClose={() => setShowV2(false)} />}
+
+      <button
+        onClick={() => setShowV2(true)}
+        style={{
+          alignSelf: "center", display: "flex", alignItems: "center", gap: 8,
+          background: "linear-gradient(135deg, #1a5c2a, #2d8a45)", color: "#fff",
+          border: "none", borderRadius: 999, padding: "8px 16px", cursor: "pointer",
+          fontSize: 14, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.15)", letterSpacing: 0.3,
+        }}
+      >
+        CGI Cup Tracker
+        <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 7px", fontSize: 12, fontWeight: 800 }}>V2</span>
+        — What's New
+        <span style={{ fontSize: 12, opacity: 0.85 }}>ⓘ</span>
+      </button>
 
       <Card title="Overview">
         <p style={{ color: "#444", lineHeight: 1.7, margin: 0 }}>
@@ -1000,20 +1064,34 @@ function InfoTab() {
         </p>
       </Card>
 
+      <Card title="Par Normalization">
+        <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How are weeks at different pars made fair?</p>
+        <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
+          The course is played at varying pars (the front 9 has ranged from par 34 to 36). To keep every
+          week on the same footing, each gross score is first converted to its <strong>par-36 equivalent</strong>
+          before it touches the Modified Average. This is the baseline the handicap system has always used.
+        </p>
+        {formula("Adjusted Gross  =  Gross  +  (36 − Par)")}
+        <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
+          Example: a 38 on a par-34 day counts as a <strong>40</strong> (38 + 2); a 38 on a par-36 day stays <strong>38</strong>.
+          So a tougher day relative to par is never disguised as a low score.
+        </p>
+      </Card>
+
       <Card title="Modified Average">
         <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How does the Modified Average update each week?</p>
         <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          After each round, the Modified Average updates based on how the player scored relative to their current average.
-          Improvement is rewarded more aggressively than decline — a bad round only bleeds in 20%, while
-          a good round moves the average to the midpoint.
+          After each round, the Modified Average updates based on how the player's <strong>par-36-adjusted</strong> score
+          compares to their current average. Improvement is rewarded more aggressively than decline — a bad round only
+          bleeds in 20%, while a good round moves the average to the midpoint.
         </p>
-        {formula("If gross > avg  →  New Avg  =  prevAvg + 0.2 × (gross − prevAvg)")}
-        {formula("If gross ≤ avg  →  New Avg  =  (prevAvg + gross) ÷ 2")}
+        {formula("If adjGross > avg  →  New Avg  =  prevAvg + 0.2 × (adjGross − prevAvg)")}
+        {formula("If adjGross ≤ avg  →  New Avg  =  (prevAvg + adjGross) ÷ 2")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example (played worse): prevAvg 42.00, gross 46 → 42 + 0.2 × (46 − 42) = <strong>42.80</strong>
+          Example (played worse): prevAvg 42.00, adjusted gross 46 → 42 + 0.2 × (46 − 42) = <strong>42.80</strong>
         </p>
         <p style={{ color: "#666", fontSize: 13, margin: "4px 0 0" }}>
-          Example (played better): prevAvg 42.00, gross 38 → (42 + 38) ÷ 2 = <strong>40.00</strong>
+          Example (played better): prevAvg 42.00, adjusted gross 38 → (42 + 38) ÷ 2 = <strong>40.00</strong>
         </p>
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
           The Modified Average used for a given week's stroke calculation is always the average <em>before</em> that round is played.
@@ -1023,20 +1101,23 @@ function InfoTab() {
       <Card title="Weekly Strokes">
         <p style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a5c2a" }}>How are weekly strokes calculated?</p>
         <p style={{ color: "#444", lineHeight: 1.7, margin: "0 0 8px" }}>
-          Strokes represent the handicap adjustment applied to a player's gross score.
-          Players who average above par receive negative strokes (lowering their net score).
-          Players who average below par receive positive strokes (raising their net score).
-          A factor of <strong>0.83</strong> is applied when the Modified Average is at or above par,
-          which prevents large handicap swings and keeps competition balanced.
+          Strokes are the handicap adjustment applied to a player's gross score, measured against the
+          par-36 baseline. Players who average above 36 receive negative strokes (lowering their net score);
+          players who average below 36 give positive strokes (raising their net score).
+          A single <strong>0.83 allowance</strong> applies to <em>everyone</em>, on both sides of par — high-handicappers
+          get 83% of their difference as help, and better players give 83% of theirs rather than full strength,
+          so low scorers are not over-penalized.
         </p>
-        {formula("If Mod Avg ≥ Par  →  Strokes  =  ROUND((Par − Mod Avg) × 0.83, 1)")}
-        {formula("If Mod Avg < Par  →  Strokes  =  ROUND(Par − Mod Avg, 1)")}
+        {formula("Strokes  =  ROUND((36 − Mod Avg) × 0.83, 1)")}
         <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
-          Example: Mod Avg 42.00, Par 36 → (36 − 42) × 0.83 = <strong>−5.0 strokes</strong>
+          Example (above par): Mod Avg 42.00 → (36 − 42) × 0.83 = <strong>−5.0 strokes</strong> (help)
         </p>
         <p style={{ color: "#666", fontSize: 13, margin: "4px 0 0" }}>
-          The par used each week is set when scores are entered and can be adjusted if a hole plays at a different par
-          (e.g., hole 1 playing as par 3 instead of par 4 changes the round par from 36 to 35).
+          Example (below par): Mod Avg 34.00 → (36 − 34) × 0.83 = <strong>+1.7 strokes</strong> (gives strokes)
+        </p>
+        <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>
+          Because scores are already normalized to par 36 (see Par Normalization above), the day's actual par
+          does not need to enter this step — a low-par week can no longer artificially turn a player into a stroke-giver.
         </p>
       </Card>
 

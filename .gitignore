@@ -16,6 +16,11 @@ dist-ssr
 src/.claude/
 src/*.xlsx
 
+# Local audit/analysis artifacts (not for the repo)
+data/
+reference/
+scripts/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
